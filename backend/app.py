@@ -10684,15 +10684,46 @@ def manage_equipment_analysis():
         user = get_authorized_inspection_report_user(cur)
         raw = fetch_equipment_report_issue_library(cur, user, start, end)
         excluded = equipment_issue_exclusions(cur, [row['id'] for row in raw])
-        issues = equipment_analysis.enrich([serialize_equipment_report_issue(row) for row in raw if row['id'] not in excluded])
+        from equipment_report_settings import load as equipment_settings, reference as equipment_reference, save as save_equipment_settings
+        from equipment_report_stations import build as station_groups
+        from report_ai_memory import fingerprint
+        catalog = fetch_equipment_report_catalog(cur, user)
+        reference = equipment_reference(cur, catalog)
+        meta = equipment_settings(cur)
+        issues = equipment_analysis.enrich([serialize_equipment_report_issue(row) for row in raw if row['id'] not in excluded], reference)
+        signature = fingerprint([issues, reference])
         report = get_latest_inspection_report_snapshot(cur, REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES) or {}
         analysis = report.get('equipment_analysis') or {}
         if request.method == 'PUT':
+            if source.get('data_signature') != signature:
+                raise ValueError('问题或短语已变化，请重新读取后再保存。')
+            adjustments = source.get('station_overrides', {})
+            if not isinstance(adjustments, dict): raise ValueError('请提交有效的站点调整。')
+            groups = {g['key']: (g, station) for station in station_groups(issues, meta['settings'], cur)
+                for g in station['groups']}
+            by_id = {i['issue_id']: i for i in issues}
+            for key, value in adjustments.items():
+                if key not in groups or not isinstance(value, dict): raise ValueError('站点分类数据已变化，请重新读取。')
+                group, station = groups[key]
+                name=value.get('name');rep=value.get('representative_issue_id')
+                if not isinstance(name,str) or not name.strip() or len(name.strip())>80 or type(rep) is not int or rep not in group['issue_ids']:
+                    raise ValueError('请填写80字内类别名并从本类别选择代表问题。')
+                if any(by_id[i].get('issue_photo') for i in group['issue_ids']) and not by_id[rep].get('issue_photo'):
+                    raise ValueError('代表问题须选择本类别中有照片的问题。')
+            adjustments = {key: {'name':value['name'].strip(), 'representative_issue_id':value['representative_issue_id']}
+                for key,value in adjustments.items()}
+            settings = dict(meta['settings'], station_overrides={**meta['settings']['station_overrides'], **adjustments})
+            save_equipment_settings(cur, settings, source.get('revision'), user)
             equipment_analysis.save_overrides(cur, issues, analysis, source, user['id'])
             save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES, user, section='equipment_analysis')
         result = equipment_analysis.apply_overrides(analysis, issues,
             equipment_analysis.load_overrides(cur, [i['issue_id'] for i in issues]))
         result['issues'] = issues
+        meta = equipment_settings(cur)
+        result['station_groups'] = station_groups(issues, meta['settings'], cur)
+        result['settings_snapshot'] = meta['settings']
+        result['revision'] = meta['revision']
+        result['data_signature'] = signature
         result['generated'] = bool(analysis)
         result['source_generated_at'] = (report.get('summary') or {}).get('generated_at')
         conn.commit()
@@ -10709,6 +10740,60 @@ def manage_equipment_analysis():
         return jsonify(success=False, error='设备设施选题设置操作失败，请稍后重试。'), 500
     finally:
         close_db_resources(cur, conn)
+
+
+def fetch_equipment_report_catalog(cur, user):
+    clauses=["REPLACE(t.table_name,%s,'')=%s"]
+    params=[DISPLAY_REMOVED_STATION_PHRASE,EQUIPMENT_FACILITIES_REPORT_TABLE]
+    if not append_inspection_table_scope_filter(cur,user,clauses,params,'t.id',
+            'limit_plan_inspection_table_scope',permissions=REPORT_SHARED_SCOPE_PERMISSIONS): return []
+    cur.execute('SELECT t.id,t.table_code,t.table_name FROM inspection_tables t WHERE '+ ' AND '.join(clauses),params)
+    tables=list(cur.fetchall());rows=[]
+    for table in tables:
+        physical=get_physical_table_name_by_code(table['table_code'])
+        if not physical or not checklist_physical_table_exists(cur,physical):continue
+        fields=get_checklist_field_meta(cur,table['id'])
+        cur.execute(sql.SQL('SELECT * FROM {} ORDER BY standard_id').format(sql.Identifier(physical)))
+        for row in cur.fetchall():
+            rows.append({'external_standard_id':str(row['standard_id']),
+                'fields':{label:str(row.get(key) or '').strip() for key,label in fields}})
+    return rows
+
+
+@app.route('/api/inspection-reports/equipment-phrases',methods=['GET','PUT'])
+def manage_equipment_phrases():
+    conn=cur=None
+    try:
+        from equipment_report_settings import load,save,reference
+        from report_ai_memory import fingerprint
+        conn=get_db_connection();cur=conn.cursor();user=get_authorized_inspection_report_user(cur)
+        catalog=fetch_equipment_report_catalog(cur,user);meta=load(cur)
+        signature=fingerprint(catalog)
+        if request.method=='PUT':
+            source=request.get_json(silent=True) or {};values=source.get('phrases')
+            if source.get('data_signature')!=signature:raise ValueError('规范数据已变化，请重新读取。')
+            if not isinstance(values,dict) or any(k not in {r['external_standard_id'] for r in catalog}
+                    or not isinstance(v,str) or not v.strip() or len(v.strip())>100 for k,v in values.items()):
+                raise ValueError('短语必须对应有效规范，且为100字以内的非空文本。')
+            settings=dict(meta['settings'],phrases={**meta['settings']['phrases'],**{k:v.strip() for k,v in values.items()}})
+            save(cur,settings,source.get('revision'),user)
+            save_report_workspace(cur,REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,user,section='equipment_analysis')
+            meta=load(cur)
+        values=reference(cur,catalog)
+        conn.commit()
+        return jsonify(success=True,meta=meta,data_signature=signature,
+            standards=[dict(external_standard_id=k,**v) for k,v in values.items()])
+    except PermissionError as exc:
+        if conn:conn.rollback()
+        return jsonify(error=str(exc)),403
+    except ValueError as exc:
+        if conn:conn.rollback()
+        return jsonify(error=str(exc)),400
+    except Exception:
+        if conn:conn.rollback()
+        app.logger.exception('Equipment phrases failed')
+        return jsonify(error='检查内容短语处理失败，请稍后重试。'),500
+    finally:close_db_resources(cur,conn)
 
 
 def serialize_equipment_inspection_station(row):
@@ -27594,6 +27679,9 @@ def generate_equipment_facilities_report_job(
         cur = conn.cursor()
         excluded = equipment_issue_exclusions(cur, [row['id'] for row in issue_rows])
         topic_overrides = equipment_analysis.load_overrides(cur, [row['id'] for row in issue_rows])
+        from equipment_report_settings import load as equipment_settings, reference as equipment_reference
+        equipment_meta = equipment_settings(cur)
+        equipment_catalog = equipment_reference(cur, fetch_equipment_report_catalog(cur, user))
     finally:
         close_db_resources(cur, conn)
     issue_library_snapshot = [dict(serialize_equipment_report_issue(row), included=row['id'] not in excluded)
@@ -27610,7 +27698,11 @@ def generate_equipment_facilities_report_job(
     report["template_version"] = "equipment-native-2"
     update_inspection_report_job(task_id, 'running', 52, '正在复用历史或调用AI挑选高频、特性与重点问题')
     set_report_ai_evidence(issue_rows)
-    report['equipment_analysis'] = equipment_analysis.analyze(equipment_issues, topic_overrides)
+    report['equipment_analysis'] = equipment_analysis.analyze(equipment_issues, topic_overrides, equipment_catalog)
+    update_inspection_report_job(task_id, 'running', 66, '正在按站点复用或生成问题分类及代表照片，本站问题未变不重复调用AI')
+    from equipment_report_stations import build as build_station_groups
+    report['equipment_analysis']['station_groups'] = build_station_groups(report['equipment_analysis']['issues'], equipment_meta['settings'], generate=True)
+    report['equipment_analysis']['settings_snapshot'] = equipment_meta['settings']
     report['region_rows'].sort(key=lambda row: equipment_analysis.unit_order(row['unit_name']))
     update_inspection_report_job(
         task_id,

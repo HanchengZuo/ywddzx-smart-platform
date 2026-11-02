@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.6', date: '2026-11-02', title: '设备设施短语与站点特性问题升级',
+    summary: '新增检查内容短语编辑与站点分类代表照片，持久复用AI分析结果。',
+    items: ['短语面板覆盖设备设施现场规范，支持搜索和人工调整；9067默认为非检查表类问题。',
+      '片区特性选题保留，站点页独立对本站全部问题分类，每类选一张代表照片，支持修改类别名与代表问题。',
+      '本站证据不变复用历史分类及选图，人工保存不调用AI；分页完整展示所有类别，预览与导出共用成稿。'] },
   { version: 'v12.5.1', date: '2026-11-02', title: '证照登记与更新入口优化',
     summary: '本站登记固定站点，去掉名称编号，台账新增更新证照入口。',
     items: ['本站范围的所属站点置灰固定，不再显示下拉框；有全部登记授权时仍可选择站点。',

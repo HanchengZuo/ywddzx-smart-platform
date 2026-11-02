@@ -4,7 +4,7 @@
       <div>
         <small class="eyebrow">EQUIPMENT ANALYSIS</small>
         <h3>设备设施选题与依据</h3>
-        <p>从共性、差异与风险三个维度审阅报告选题。</p>
+        <p>区分片区差异与站点问题分类，查看证据并调整代表照片。</p>
       </div>
       <span class="shared-badge">全局共享设置</span>
     </header>
@@ -43,8 +43,11 @@
     <div class="panel-notes">
       <p v-if="!analysis.generated">首次生成后展示 AI 选题，也可先手动设置特性、重点问题。</p>
       <p v-else>选题来源：{{ analysis.source_generated_at || '最近生成报告' }}</p>
-      <p>保存不调用 AI；重新生成报告后应用选题。</p>
-      <p>饼图统计将指定的 24 个接地类规范统一归为“设备接地不规范”，其他分类不变；选题依据仍保留原规范短语。</p>
+      <p>保存不调用 AI；重新生成报告后应用选题。站点分类按本站全部问题分析，历史结果自动复用。</p>
+      <p>
+        饼图统计将指定的 24
+        个接地类规范统一归为“设备接地不规范”，其他分类不变；选题依据仍保留原规范短语。
+      </p>
       <small>{{ savedLabel }}</small>
     </div>
     <p
@@ -87,6 +90,21 @@
             </button>
           </header>
           <p v-if="error" role="alert" class="error dialog-error">{{ error }}</p>
+          <div
+            v-if="active === 'special'"
+            class="special-level"
+            role="group"
+            aria-label="特性问题维度"
+          >
+            <button :class="{ selected: specialLevel === 'unit' }" @click="specialLevel = 'unit'">
+              片区特性选题</button
+            ><button
+              :class="{ selected: specialLevel === 'station' }"
+              @click="specialLevel = 'station'"
+            >
+              站点分类与代表照片
+            </button>
+          </div>
           <template v-if="active === 'high'">
             <div class="dialog-info">
               <strong>{{ count('high') }} 个高频类别</strong
@@ -144,6 +162,22 @@
             <footer class="dialog-footer">
               <span>只读依据，不修改报告选题。</span
               ><button class="primary-button" @click="close">完成查看</button>
+            </footer>
+          </template>
+          <template v-else-if="active === 'special' && specialLevel === 'station'">
+            <EquipmentStationTopics
+              v-model="draft.station_overrides"
+              :stations="analysis.station_groups || []"
+              :issues="analysis.issues || []"
+              :resolve-image="resolveImage"
+              :disabled="saving"
+              @photo="$emit('photo', $event)"
+            />
+            <footer class="dialog-footer">
+              <span>每类选择一张代表照片；没有照片的问题保留分类说明。保存后重新生成报告生效。</span
+              ><button class="primary-button" :disabled="saving || !isDirty" @click="save">
+                保存调整
+              </button>
             </footer>
           </template>
           <template v-else>
@@ -259,16 +293,19 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
+import EquipmentStationTopics from './EquipmentStationTopics.vue'
 const props = defineProps({
   month: String,
   dateFrom: String,
   dateTo: String,
   generatedAt: String,
   librarySignature: String,
+  phraseRevision: Number,
   savedLabel: String,
   resolveImage: { type: Function, required: true },
 })
 const emit = defineEmits(['change', 'saved', 'photo'])
+const specialLevel = ref('station')
 const analysis = ref({}),
   loading = ref(false),
   saving = ref(false),
@@ -277,7 +314,7 @@ const analysis = ref({}),
 const keyword = ref(''),
   unit = ref(''),
   selectedOnly = ref(false),
-  draft = ref({ special: [], severe: [] })
+  draft = ref({ special: [], severe: [], station_overrides: {} })
 let requestId = 0
 const dialogElement = ref(null)
 let previousFocus = null
@@ -292,7 +329,7 @@ const tabs = [
     key: 'special',
     label: '特性问题',
     symbol: '特',
-    description: '关注片区少见的差异问题，补选或调整代表性案例。',
+    description: '片区差异选题，以及本站全部问题的分类与代表照片。',
   },
   {
     key: 'severe',
@@ -303,12 +340,14 @@ const tabs = [
 ]
 const activeTab = computed(() => tabs.find((t) => t.key === active.value) || tabs[0])
 const activeTitle = computed(() => tabs.find((t) => t.key === active.value)?.label || '')
-const isDirty = computed(() =>
-  ['special', 'severe'].some(
-    (key) =>
-      JSON.stringify([...draft.value[key]].sort((a, b) => a - b)) !==
-      JSON.stringify([...(analysis.value[key + '_issue_ids'] || [])].sort((a, b) => a - b)),
-  ),
+const isDirty = computed(
+  () =>
+    Object.keys(draft.value.station_overrides).length > 0 ||
+    ['special', 'severe'].some(
+      (key) =>
+        JSON.stringify([...draft.value[key]].sort((a, b) => a - b)) !==
+        JSON.stringify([...(analysis.value[key + '_issue_ids'] || [])].sort((a, b) => a - b)),
+    ),
 )
 const highIds = computed(
   () => new Set((analysis.value.high_groups || []).flatMap((g) => g.issues.map((i) => i.issue_id))),
@@ -334,6 +373,7 @@ function adopt(value) {
   draft.value = {
     special: [...(value.special_issue_ids || [])],
     severe: [...(value.severe_issue_ids || [])],
+    station_overrides: {},
   }
   emit('change', value)
 }
@@ -369,6 +409,7 @@ function open(key) {
   draft.value = {
     special: [...(analysis.value.special_issue_ids || [])],
     severe: [...(analysis.value.severe_issue_ids || [])],
+    station_overrides: {},
   }
   previousFocus = document.activeElement
   active.value = key
@@ -416,6 +457,9 @@ async function save() {
       ...params(),
       special_issue_ids: draft.value.special,
       severe_issue_ids: draft.value.severe,
+      station_overrides: draft.value.station_overrides,
+      revision: analysis.value.revision,
+      data_signature: analysis.value.data_signature,
     })
     if (id === requestId) {
       adopt(response.data.analysis)
@@ -430,7 +474,14 @@ async function save() {
   }
 }
 watch(
-  () => [props.month, props.dateFrom, props.dateTo, props.generatedAt, props.librarySignature],
+  () => [
+    props.month,
+    props.dateFrom,
+    props.dateTo,
+    props.generatedAt,
+    props.librarySignature,
+    props.phraseRevision,
+  ],
   load,
   { immediate: true },
 )
@@ -448,6 +499,27 @@ onBeforeUnmount(() => {
   color: #20384d;
   font-family: inherit;
   box-sizing: border-box;
+}
+.special-level {
+  display: flex;
+  gap: 10px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #d3e1eb;
+  background: #f4f8fb;
+}
+.special-level button {
+  padding: 10px 16px;
+  border: 1px solid #b6cede;
+  border-radius: 9px;
+  background: white;
+  color: #315b72;
+  font: inherit;
+  cursor: pointer;
+}
+.special-level button.selected {
+  background: #216a86;
+  color: white;
+  border-color: #216a86;
 }
 .special {
   --accent: #13776d;

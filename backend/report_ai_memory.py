@@ -22,6 +22,7 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    'equipment_station': '设备设施站点问题分类与代表照片',
     'service_phrases': '现场服务规范环节短语',
     'service_behaviors': '现场服务问题行为分类',
     'service_unit_evidence': '各片区环节概括与代表照片',

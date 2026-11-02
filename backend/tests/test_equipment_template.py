@@ -137,9 +137,12 @@ class EquipmentTemplateTest(unittest.TestCase):
                 'resolve_inspection_report_source_selection': (None, {'mode': 'all'}),
                 'equipment_issue_exclusions': {5}, 'update_inspection_report_job': None,
                 'equipment_analysis.load_overrides': {},
+                'fetch_equipment_report_catalog': [],
             }.items():
                 stack.enter_context(patch(f'app.{name}', return_value=value))
             ai = stack.enter_context(patch('app.generate_equipment_facilities_report_insights'))
+            stack.enter_context(patch('equipment_report_settings.load', return_value={'settings':{'phrases':{},'station_overrides':{}}}))
+            stack.enter_context(patch('equipment_report_settings.reference', return_value={}))
             topics = stack.enter_context(patch('equipment_report_analysis.choose_topics'))
             save = stack.enter_context(patch('app.save_inspection_report_snapshot'))
             reports.generate_equipment_facilities_report_job('test', 3, '2026-09', 'shared', {})

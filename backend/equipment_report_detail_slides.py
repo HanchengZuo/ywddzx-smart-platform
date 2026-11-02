@@ -209,7 +209,13 @@ def build_details(prs, original, report, storage_root):
                 photos(slide, [item], (x, 4.85, width, 2.2), storage_root)
         for station in stations:
             station_issues = [i for i in unit_issues if i.get('station_id') == station['station_id']]
-            station_special = [i for i in station_issues if i['issue_id'] in special_ids]
+            if 'station_groups' in analysis:
+                station_result = next((s for s in analysis['station_groups'] if s['station_id'] == station['station_id']), {})
+                by_id = {i['issue_id']: i for i in station_issues}
+                station_special = [dict(by_id[g['representative_issue_id']], phrase=g['name'])
+                    for g in station_result.get('groups', []) if g['representative_issue_id'] in by_id]
+            else:
+                station_special = [i for i in station_issues if i['issue_id'] in special_ids]
             description = '主要问题：\n'+'\n'.join(i['description'] for i in station_issues) if station_issues else '本次未发现参与报告的问题。'
             main_pages = pages(description, 4.5, 4.5, 17)
             photo_chunks = [station_special[i:i+2] for i in range(0,len(station_special),2)] or [[]]
@@ -221,8 +227,9 @@ def build_details(prs, original, report, storage_root):
                 text(slide, main_pages[page_index] if page_index<len(main_pages) else '主要问题详见本站前页。', .3, 2.65, 4.5, 4.4, 17)
                 text(slide, '特性问题', 5.3, 1.25, 7.5, .6, 24, bold=True)
                 selected = photo_chunks[page_index] if page_index<len(photo_chunks) else []
+                label_width = (7.6-.12*max(0,len(selected)-1))/max(1,len(selected))
                 for i, item in enumerate(selected):
-                    fitted_text(slide, item['phrase'], 5.25+i*3.9, 1.95, 3.7, 1, 17)
+                    fitted_text(slide, item['phrase'], 5.25+i*(label_width+.12), 1.95, label_width, 1, 17)
                 photos(slide, selected, (5.25, 3.05, 7.6, 3.95), storage_root)
 
     severe = [i for i in issues if i['issue_id'] in set(analysis.get('severe_issue_ids') or [])]

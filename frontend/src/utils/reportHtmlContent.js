@@ -316,6 +316,12 @@ function equipmentSections(report) {
     })
   }
   const priorityIds = new Set(list(analysis.severe_issue_ids).map(Number))
+  for (const station of list(analysis.station_groups)) {
+    sections.push({title:`站点特性问题 · ${station.station_name}`,collapsible:true,
+      metrics:`${station.issue_count}项 · ${station.groups.length}类`,
+      items:station.groups.map(g=>({title:g.name,content:`本类${g.issue_ids.length}项问题`})),
+      issues:station.groups.map(g=>issues.find(i=>i.issue_id===g.representative_issue_id)).filter(Boolean)})
+  }
   const priority = issues.filter(issue => priorityIds.has(Number(issue.issue_id)))
   if (priority.length) sections.push({ title: '重点问题', tone: 'priority', issues: priority })
   const deep = report.deep_analysis || {}
