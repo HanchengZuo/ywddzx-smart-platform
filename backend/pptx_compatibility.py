@@ -207,6 +207,8 @@ def add_editable_value_table(prs, slide, shape):
 
 
 def normalize_presentation(prs):
+    from report_branding import apply_report_branding
+    apply_report_branding(prs)
     for slide in list(prs.slides):
         for shape in list(slide.shapes):
             if getattr(shape,'has_chart',False):

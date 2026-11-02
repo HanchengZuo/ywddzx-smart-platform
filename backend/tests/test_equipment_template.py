@@ -8,6 +8,7 @@ from datetime import date
 from contextlib import ExitStack
 
 from pptx import Presentation
+from report_branding import apply_report_branding
 from equipment_report_presentation import TEMPLATE_FILE, build_equipment_template_presentation, fill_station_page, normalize_template_fonts
 from equipment_report_library import save_exclusions, exclusions
 import app as reports
@@ -28,6 +29,7 @@ class EquipmentTemplateTest(unittest.TestCase):
             build_equipment_template_presentation(report, path)
             original, generated = Presentation(TEMPLATE_FILE), Presentation(path)
             normalize_template_fonts(original)
+            apply_report_branding(original)
             self.assertEqual(len(generated.slides), 40)
             for index in [1, 2, 4, 7, *range(10, 40)]:
                 self.assertEqual(original.slides[index]._element.xml.replace('严重问题', '重点问题'), generated.slides[index]._element.xml)

@@ -1948,7 +1948,9 @@ def copy_existing_non_oil_presentation(report, destination, storage_root=None):
     with ZipFile(source) as package:
         has_comments = any("comment" in name.lower() for name in package.namelist())
     deck = Presentation(source)
-    if has_comments or deck.core_properties.version != COMPATIBILITY_VERSION:
+    from report_branding import apply_report_branding
+    branding_changed = apply_report_branding(deck)
+    if branding_changed or has_comments or deck.core_properties.version != COMPATIBILITY_VERSION:
         _remove_presentation_comments(deck)
         normalize_presentation(deck)
         deck.save(destination)

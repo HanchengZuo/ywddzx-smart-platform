@@ -173,5 +173,7 @@ def build_equipment_template_presentation(report, output_path, storage_root=None
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Keep the existing font whitelist without adding compatibility pages or moving template objects.
     normalize_template_fonts(prs)
+    from report_branding import apply_report_branding
+    apply_report_branding(prs)
     prs.save(output_path)
     return {'ppt_path': str(output_path), 'slide_count': len(prs.slides)}

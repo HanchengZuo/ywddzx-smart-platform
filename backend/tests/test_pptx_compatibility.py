@@ -144,11 +144,11 @@ class PptCompatibilityTests(unittest.TestCase):
 
     def test_safety_export_reuse_checks_current_renderer_key_without_deleting_history(self):
         import json
-        from report_ppt_artifacts import FONT_ENVIRONMENT
+        from report_ppt_artifacts import FONT_ENVIRONMENT, branding_key
         with tempfile.TemporaryDirectory() as root:
             key='a'*64;directory=Path(root)/'report_presentations'/('compatible-'+key)
             directory.mkdir(parents=True)
-            manifest={'version':COMPATIBILITY_VERSION,'fonts':FONT_ENVIRONMENT,'slide_count':31,'artifact_key':key}
+            manifest={'version':COMPATIBILITY_VERSION,'fonts':FONT_ENVIRONMENT,'branding':branding_key(),'slide_count':31,'artifact_key':key}
             (directory/'report.pptx').write_bytes(b'temporary fixture')
             (directory/'manifest.json').write_text(json.dumps(manifest))
             export=Path(root)/'export.pptx';export.write_bytes(b'temporary fixture')

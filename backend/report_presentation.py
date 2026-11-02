@@ -1061,14 +1061,8 @@ class InspectionReportPresentation:
                 self._add_text(slide, content, 1.84, y + 0.72, 10.25, card_height - 0.92, size=content_size, color=SLATE)
 
     def _add_quality_logo(self, slide, x=12.42, y=0.18, height=0.56):
-        logo_path = os.path.join(os.path.dirname(__file__), "assets", "report_logo.png")
-        if os.path.isfile(logo_path):
-            slide.shapes.add_picture(
-                logo_path,
-                Inches(x),
-                Inches(y),
-                height=Inches(height),
-            )
+        from report_branding import add_logo
+        return add_logo(slide.shapes, Inches(x), Inches(y), Inches(height), Inches(height))
 
     def _add_quality_header(self, slide, title, ai=False, title_accent=""):
         title_text = _text(title, "报告内容")
@@ -1896,11 +1890,11 @@ class InspectionReportPresentation:
         line.fill.fore_color.rgb = RGBColor(42, 155, 211)
         line.line.fill.background()
         self._add_quality_logo(slide, x=12.0, y=0.22, height=0.58)
-        self._add_quality_logo(slide, x=5.92, y=2.88, height=1.05)
+        self._add_quality_logo(slide, x=(self.prs.slide_width/Inches(1)-1.05)/2, y=2.88, height=1.05)
         self._add_text(
             slide,
             data.get("title") or "通报完毕",
-            4.86,
+            (self.prs.slide_width/Inches(1)-3.6)/2,
             4.12,
             3.6,
             0.52,
