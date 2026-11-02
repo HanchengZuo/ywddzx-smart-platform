@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.6.5', date: '2026-11-02', title: '质量计量报告指定页面模板对齐',
+    summary: '仅调整发现问题、禁止项、两类管理追溯和工作计划的PPT样式。',
+    items: ['参照0804模板的表格列宽、青色表头、黑色实线边框与20磅正文，保留真实数据及原分页。',
+      '管理追溯和工作计划采用模板的横条、段内蓝色标签、加粗字体及段落缩进，移除AI生成内容标识。',
+      '照片完整显示并保留透明LOGO，其他页面及权限不变；更新质量计量专属渲染缓存，不重复调用AI。'] },
   { version: 'v12.6.4', date: '2026-11-02', title: '报告统一业务督导中心品牌标识',
     summary: '六类PPT检查并替换原中国石油LOGO，预览与导出同步采用透明背景的业务督导中心LOGO。',
     items: ['封面、页眉、结束页及母版中的旧标识统一等比替换，保留PNG透明通道，移除旧标识底色，保持照片、图表和正文不变。',

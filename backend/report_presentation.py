@@ -1365,81 +1365,12 @@ class InspectionReportPresentation:
         )
 
     def _render_quality_finding(self, data):
-        slide = self._quality_blank_slide(
-            data.get("title_prefix") or data.get("title") or "二、检查发现-",
-            title_accent=data.get("title_accent") or "发现问题",
-        )
-        blocks = data.get("text_blocks") or [
-            {"runs": [{"text": line, "tone": "ink"}]}
-            for line in data.get("text_lines") or []
-        ]
-        self._add_quality_text_blocks(slide, blocks, 0.78, 1.52, 6.05, 5.18, size=16)
-        rows = [[item.get("sequence"), item.get("section"), item.get("problem_type"), item.get("count"), item.get("percentage")] for item in data.get("rows") or []]
-        emphasized_rows = {
-            index: RED
-            for index, item in enumerate(data.get("rows") or [])
-            if item.get("section") == "油站环节"
-        }
-        self._quality_table(
-            slide,
-            ["序号", "环节排前三", "问题类型", "问题数量", "占比/%"],
-            rows,
-            7.18,
-            1.2,
-            4.65,
-            5.35,
-            weights=[0.55, 1.15, 1.55, 0.82, 0.75],
-            header_fill=TEMPLATE_CYAN,
-            header_color=INK,
-            body_fills=(WHITE,),
-            row_text_colors=emphasized_rows,
-        )
+        from quality_report_styles import finding
+        finding(self, data)
 
     def _render_quality_prohibited(self, data):
-        slide = self._quality_blank_slide(
-            data.get("title_prefix") or data.get("title") or "二、检查发现-",
-            title_accent=data.get("title_accent") or "发现问题",
-        )
-        band = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(0.58),
-            Inches(1.08),
-            Inches(11.1),
-            Inches(0.56),
-        )
-        band.fill.solid()
-        band.fill.fore_color.rgb = TEMPLATE_BLUE
-        band.line.fill.background()
-        self._add_text(
-            slide,
-            data.get("subtitle") or "1.禁止项问题",
-            0.7,
-            1.15,
-            10.7,
-            0.38,
-            size=21,
-            color=WHITE,
-            bold=True,
-            valign=MSO_ANCHOR.MIDDLE,
-        )
-        self._add_text(slide, data.get("narrative"), 0.66, 1.86, 11.75, 0.54, size=15, bold=True)
-        rows = [[item.get("sequence"), "加油站环节", item.get("unit_name"), item.get("description"), item.get("penalty") or ""] for item in data.get("rows") or []]
-        if not rows:
-            rows = [["-", "加油站环节", "-", "当前月份暂无禁止项问题", ""]]
-        self._quality_table(
-            slide,
-            ["序号", "环节", "基层单位名称", "禁止项管理规定", "处罚情况"],
-            rows,
-            0.58,
-            2.48,
-            11.1,
-            4.05,
-            weights=[0.45, 0.9, 1.15, 4.3, 0.9],
-            narrative_columns={3},
-            header_fill=TEMPLATE_CYAN,
-            header_color=INK,
-            body_fills=(WHITE,),
-        )
+        from quality_report_styles import prohibited
+        prohibited(self, data)
 
     def _render_quality_flow_chart(self, data):
         slide = self._quality_blank_slide(
@@ -1718,163 +1649,17 @@ class InspectionReportPresentation:
         if not issues:
             self._add_panel(slide, 2.1, 3.0, 9.0, 1.5, "暂无数据", "当前分类暂无可展示的问题。", MUTED)
 
-    def _render_quality_trace_copy(self, slide, data, x, y, width, height):
-        typical_issue = data.get("typical_issue") or {}
-        description = self._issue_description(typical_issue)
-        station = _text(typical_issue.get("station_name"), "典型问题")
-        typical_text = f"典型问题：{station}：{description}"
-        typical_height = min(1.25, max(0.72, 0.58 + len(typical_text) / 170))
-        typical_size = self._fit_quality_text_size(
-            typical_text,
-            width,
-            typical_height,
-            maximum=18,
-            minimum=13,
-            line_height=1.35,
-        )
-        self._add_text(
-            slide,
-            typical_text,
-            x,
-            y,
-            width,
-            typical_height,
-            size=typical_size,
-            color=RED,
-            bold=True,
-        )
-
-        items = data.get("analysis_items") or []
-        item_y = y + typical_height + 0.16
-        remaining_height = max(0.8, height - typical_height - 0.16)
-        gap = 0.1
-        weights = [max(0.8, min(2.2, len(str(item.get("content") or "")) / 80)) for item in items]
-        weight_total = sum(weights) or 1
-        usable_height = max(0.6, remaining_height - gap * max(0, len(items) - 1))
-        for index, item in enumerate(items):
-            item_height = usable_height * weights[index] / weight_total
-            label_width = min(1.55, max(1.22, width * 0.19))
-            self._add_text(
-                slide,
-                item.get("label"),
-                x,
-                item_y,
-                label_width,
-                item_height,
-                size=14,
-                color=RGBColor(52, 119, 195),
-                bold=True,
-            )
-            content_width = width - label_width - 0.08
-            content = _text(item.get("content"), "-")
-            content_size = self._fit_quality_text_size(
-                content,
-                content_width,
-                item_height,
-                maximum=16,
-                minimum=11,
-                line_height=1.4,
-            )
-            self._add_text(
-                slide,
-                content,
-                x + label_width + 0.08,
-                item_y,
-                content_width,
-                item_height,
-                size=content_size,
-                color=INK,
-            )
-            item_y += item_height + gap
-
     def _render_quality_management_trace(self, data):
-        slide = self._quality_blank_slide(
-            data.get("title_prefix") or data.get("title") or "三、管理追溯",
-            ai=bool(data.get("ai_generated")),
-            title_accent=data.get("title_accent") or "",
-        )
-        typical_issue = data.get("typical_issue") or {}
-        description = self._issue_description(typical_issue)
-        aspect_ratio = self._image_aspect_ratio(typical_issue.get("issue_photo"))
-        content_x, content_y, content_width, content_height = 0.72, 1.22, 12.0, 5.52
-        total_copy_length = len(description) + sum(
-            len(str(item.get("content") or "")) for item in data.get("analysis_items") or []
-        )
-        if typical_issue.get("issue_photo") and aspect_ratio >= 2.2 and total_copy_length <= 300:
-            copy_height = 2.7
-            self._render_quality_trace_copy(
-                slide,
-                data,
-                content_x,
-                content_y,
-                content_width,
-                copy_height,
-            )
-            photo_height = content_height - copy_height - 0.16
-            photo_width = min(content_width, max(5.5, photo_height * aspect_ratio + 0.14))
-            self._add_picture_contain(
-                slide,
-                typical_issue.get("issue_photo"),
-                content_x + (content_width - photo_width) / 2,
-                content_y + copy_height + 0.16,
-                photo_width,
-                photo_height,
-            )
-            return
-
-        if typical_issue.get("issue_photo"):
-            photo_width = max(3.0, min(4.85, content_height * aspect_ratio + 0.12))
-            if total_copy_length >= 430:
-                photo_width = min(photo_width, 3.65)
-            copy_width = content_width - photo_width - 0.28
-            self._render_quality_trace_copy(
-                slide,
-                data,
-                content_x,
-                content_y,
-                copy_width,
-                content_height,
-            )
-            self._add_picture_contain(
-                slide,
-                typical_issue.get("issue_photo"),
-                content_x + copy_width + 0.28,
-                content_y,
-                photo_width,
-                content_height,
-            )
-            return
-        self._render_quality_trace_copy(slide, data, content_x, content_y, content_width, content_height)
+        from quality_report_styles import management_trace
+        management_trace(self, data)
 
     def _render_quality_trace_analysis(self, data):
-        slide = self._quality_blank_slide(
-            data.get("title_prefix") or data.get("title") or "三、管理追溯",
-            ai=bool(data.get("ai_generated")),
-            title_accent=data.get("title_accent") or "",
-        )
-        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.12), Inches(1.12), Inches(8.2), Inches(0.6))
-        band.fill.solid(); band.fill.fore_color.rgb = RGBColor(42, 137, 193); band.line.fill.background()
-        self._add_text(slide, data.get("subtitle") or "典型问题分析", 0.28, 1.23, 7.6, 0.32, size=16, color=WHITE, bold=True)
-        self._add_text(slide, "综上所述：", 0.92, 2.06, 1.5, 0.36, size=14, color=RGBColor(52, 119, 195), bold=True)
-        conclusion = _text(data.get("conclusion"), "暂无分析结论。")
-        if conclusion.startswith("综上所述："):
-            conclusion = conclusion[len("综上所述："):]
-        self._add_text(slide, conclusion, 2.18, 2.04, 10.1, 1.2, size=16, color=INK)
-        self._add_text(slide, "改进措施：", 0.92, 3.42, 1.5, 0.36, size=14, color=RGBColor(52, 119, 195), bold=True)
-        lines = [f"{index}、{item.get('level')}：{item.get('content')}" for index, item in enumerate(data.get("improvement_measures") or [], 1)]
-        self._add_rich_lines(slide, lines or ["暂无改进措施。"], 1.0, 3.85, 11.35, 2.55, size=15)
+        from quality_report_styles import trace_analysis
+        trace_analysis(self, data)
 
     def _render_quality_work_plan(self, data):
-        slide = self._quality_blank_slide(
-            data.get("title_prefix") or data.get("title") or "四、工作计划",
-            ai=bool(data.get("ai_generated")),
-            title_accent=data.get("title_accent") or "",
-        )
-        y = 1.3
-        for index, item in enumerate(data.get("items") or [], 1):
-            self._add_text(slide, f"{index}、{item.get('title')}", 0.95, y, 11.15, 0.42, size=18, color=RGBColor(52, 119, 195), bold=True)
-            self._add_text(slide, item.get("content"), 0.95, y + 0.48, 11.25, 1.02, size=16, color=INK)
-            y += 1.72
+        from quality_report_styles import work_plan
+        work_plan(self, data)
 
     def _render_quality_ending(self, data):
         slide = self._blank_slide(background=WHITE, footer=False)

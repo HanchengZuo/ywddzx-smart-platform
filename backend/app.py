@@ -8844,7 +8844,7 @@ def serialize_inspection_report_export(row):
     if not row:
         return None
     file_size = max(0, int(row.get("file_size") or 0))
-    preview = export_preview_manifest(resolve_storage_abs_path(row.get('file_path')),STORAGE_ROOT) if row.get('status') == 'completed' else None
+    preview = export_preview_manifest(resolve_storage_abs_path(row.get('file_path')),STORAGE_ROOT,report_type=row.get('report_type')) if row.get('status') == 'completed' else None
     return {
         "task_id": row.get("task_id"),
         "report_type": row.get("report_type"),
@@ -29721,7 +29721,7 @@ def create_inspection_report_powerpoint_export():
             (user["id"], report_type, snapshot.get("id"), snapshot.get('generated_at')),
         )
         active_task = cur.fetchone()
-        preview_options = {'report_type': report_type, 'report': report_payload} if report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY else {}
+        preview_options = {'report_type': report_type, 'report': report_payload} if report_type in (REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT) else {}
         if active_task and (active_task['status'] != 'completed' or export_preview_manifest(
             resolve_storage_abs_path(active_task.get('file_path')),STORAGE_ROOT, **preview_options)):
             conn.commit()
@@ -29838,7 +29838,7 @@ def get_latest_inspection_report_powerpoint_export():
             report_month,
             snapshot_id,
         )
-        if task and task.get('status') == 'completed' and not export_preview_manifest(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT):
+        if task and task.get('status') == 'completed' and not export_preview_manifest(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT,report_type=report_type):
             task = None
         return jsonify(
             {"success": True, "task": serialize_inspection_report_export(task)}
@@ -29891,7 +29891,7 @@ def get_report_ppt_preview_slide(task_id, page):
         if not task or task.get('status') != 'completed':
             return jsonify(error='预览不存在、已过期或尚未完成。'),404
         require_inspection_report_type_access(cur, user, task.get("report_type"))
-        path = preview_slide_path(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT,page)
+        path = preview_slide_path(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT,page,report_type=task.get('report_type'))
         if not path:
             return jsonify(error='预览页不存在，请重新准备PPT。'),404
         response = send_file(path,mimetype='image/jpeg')
