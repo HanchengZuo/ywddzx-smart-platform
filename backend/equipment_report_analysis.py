@@ -58,14 +58,14 @@ def catalog():
         workbook.close()
 
 
-def enrich(issues):
-    reference = catalog()
+def enrich(issues, reference=None):
+    reference = catalog() if reference is None else reference
     rows = []
     for issue in issues:
         item = dict(issue)
         key = str(item.get('external_standard_id') or '')
         entry = reference.get(key, {})
-        item.update(phrase=entry.get('phrase') or f'未匹配短语（规范ID {key or "缺失"}）',
+        item.update(phrase=entry.get('phrase') or ('非检查表类问题' if key == '9067' else f'未匹配短语（规范ID {key or "缺失"}）'),
                     cause=entry.get('cause') or '参考表未提供原因',
                     management_unit=canonical_unit(item.get('management_unit')))
         rows.append(item)
@@ -183,8 +183,8 @@ def save_overrides(cur, issues, analysis, data, actor):
                 (kind, issue_id, issue_id in selected, actor))
 
 
-def analyze(issues, overrides=None):
-    issues = enrich(issues)
+def analyze(issues, overrides=None, reference=None):
+    issues = enrich(issues, reference)
     groups = groups_for(issues)
     frequencies = Counter(i['phrase'] for i in issues)
     warnings = []

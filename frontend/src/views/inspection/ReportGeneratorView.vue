@@ -278,11 +278,13 @@
       <small class="config-last-saved">{{ configSavedLabel('issue_library') }}</small>
     </section>
 
+    <EquipmentReportPhrases v-if="isEquipmentFacilitiesReport && !templateUnavailable" @saved="equipmentPhraseRevision++; refreshWorkspaceMeta()" />
     <EquipmentReportTopics v-if="isEquipmentFacilitiesReport && !templateUnavailable"
       :month="selectedMonth" :date-from="reportDateFrom" :date-to="reportDateTo"
       :generated-at="reportGeneratedAt" :resolve-image="resolveImage"
       :library-signature="nonOilIssueLibrary.filter(i => i.included).map(i => i.issue_id).join(',')"
       :saved-label="configSavedLabel('equipment_analysis')" @change="equipmentTopicSelection = $event"
+      :phrase-revision="equipmentPhraseRevision"
       @saved="refreshWorkspaceMeta" @photo="openImagePreview($event.issue_photo, `问题 #${$event.issue_id}`)" />
 
     <NonOilRectificationPeriod
@@ -1743,6 +1745,7 @@ import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
+import EquipmentReportPhrases from '@/components/EquipmentReportPhrases.vue'
 import SafetyReportConfig from '@/components/SafetyReportConfig.vue'
 import ServiceReportConfig from '@/components/ServiceReportConfig.vue'
 import ServiceReportHtml from '@/components/ServiceReportHtml.vue'
@@ -1753,6 +1756,7 @@ import { reportPerspective, visibleReportTypes } from '@/utils/reportAccess'
 import { downloadReportHtml } from '@/utils/reportHtmlExport'
 
 const equipmentTopicSelection = ref(null)
+const equipmentPhraseRevision = ref(0)
 const currentRole = localStorage.getItem('user_role') || ''
 let storedPermissions = {}
 try {

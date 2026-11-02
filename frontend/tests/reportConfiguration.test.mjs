@@ -3,6 +3,17 @@ import assert from 'node:assert/strict'
 import { reportConfigurationDiffers } from '../src/utils/reportConfiguration.js'
 
 const period = { date_from: '2026-07-01', date_to: '2026-07-31' }
+test('equipment phrase and station representative adjustments are compared to the successful snapshot',()=>{
+  const settings={phrases:{9067:'非检查表类问题'},station_overrides:{}}
+  const report={month:'2026-07',summary:period,equipment_analysis:{settings_snapshot:settings}}
+  const current={...period,type:'equipment_facilities',equipment_analysis:{settings_snapshot:structuredClone(settings)}}
+  assert.equal(reportConfigurationDiffers(report,current),false)
+  current.equipment_analysis.settings_snapshot.phrases[9067]='人工调整'
+  assert.equal(reportConfigurationDiffers(report,current),true)
+  current.equipment_analysis.settings_snapshot=structuredClone(settings)
+  current.equipment_analysis.settings_snapshot.station_overrides.group={name:'接地缺陷',representative_issue_id:1}
+  assert.equal(reportConfigurationDiffers(report,current),true)
+})
 test('service saved source, phrases, classifications and photos match snapshots until a real setting changes', () => {
   const settings = {station_ids:null,phrases:{'video:1':'礼貌劝阻'},examples:{暖心服务:[1,2,3]},behavior_assignments:{},behavior_examples:{}}
   const report = {month:'2026-07',summary:period,service_settings:settings}

@@ -52,6 +52,8 @@ export function reportConfigurationDiffers(report, current) {
       && !equal({ unit_evidence: {}, ...current.service_settings },{ unit_evidence: {}, ...(context.service_settings || report.service_settings || {}) })
   }
   if (current.type === 'equipment_facilities') {
+    if (current.equipment_analysis?.settings_snapshot && !equal(current.equipment_analysis.settings_snapshot,
+      report.equipment_analysis?.settings_snapshot || {phrases:{},station_overrides:{}})) return true
     const library = context.issue_library || report.issue_library_snapshot
     const included = rows => ids(rows.filter(item => item.included !== false).map(item => item.issue_id))
     if (Array.isArray(library) && !equal(included(current.issue_library || []), included(library))) return true
