@@ -23,7 +23,8 @@ class ServiceBrandingTests(unittest.TestCase):
                 self.assertEqual(len(logos), 1)
                 logo = logos[0]
                 self.assertAlmostEqual(logo.width/logo.height, logo.image.size[0]/logo.image.size[1], places=5)
-                self.assertEqual(sum(s.name == 'service-header-brand-name' and s.text == '中国石油' for s in slide.shapes), 1)
+                self.assertFalse(any(s.has_text_frame and s.text == '中国石油' for s in slide.shapes))
+                self.assertGreater(logo.left, 12.5*914400)
                 self.assertLessEqual(logo.left+logo.width, prs.slide_width)
             for owner in [*prs.slide_masters, *prs.slide_layouts]:
                 self.assertFalse(any(s.shape_type == MSO_SHAPE_TYPE.PICTURE and s.left > 10.5*914400

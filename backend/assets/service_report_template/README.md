@@ -16,6 +16,6 @@ two common-issue summary pages, and three recommendations in a rounded dash-dot 
 Only validated evidence-grounded AI text is substituted; no example findings are reused.
 
 Brand assets supplied by the user on 2026-11-02: petrochina-wordmark.png (cover)
-and petrochina-icon.png (all subsequent headers with editable Chinese text).
+and petrochina-icon.png (all subsequent headers, icon only without a wordmark).
 The renderer replaces legacy header marks after adapting the full deck, preserving
 each image's intrinsic aspect ratio rather than stretching it with slide geometry.
