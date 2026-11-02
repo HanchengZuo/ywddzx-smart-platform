@@ -38,6 +38,9 @@ def artifact_key(report_type, report, storage_root):
     if not source_path.is_file():
         source_path = TEMPLATE_FILE
     source_hash = _digest_file(source_path) if report_type == 'non_oil' and source_path.is_file() else ''
+    if report_type == 'quality_measurement':
+        from quality_report_styles import RENDERER_VERSION
+        source_hash = RENDERER_VERSION
     if report_type == 'equipment_facilities':
         from equipment_report_presentation import TEMPLATE_FILE as EQUIPMENT_TEMPLATE, RENDERER_VERSION
         source_hash = _digest_file(EQUIPMENT_TEMPLATE) + RENDERER_VERSION
@@ -51,12 +54,19 @@ def artifact_key(report_type, report, storage_root):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
 
+def _current_renderer(manifest, report_type=None):
+    if (report_type or manifest.get('report_type')) == 'quality_measurement':
+        from quality_report_styles import RENDERER_VERSION
+        return manifest.get('quality_renderer') == RENDERER_VERSION
+    return True
+
+
 def _read_artifact(directory, verify_pages=True):
     try:
         manifest = json.loads((directory / 'manifest.json').read_text())
         count = int(manifest['slide_count'])
         if (manifest['version'] != COMPATIBILITY_VERSION or manifest.get('fonts') != FONT_ENVIRONMENT
-                or manifest.get('branding') != branding_key() or count < 1):
+                or manifest.get('branding') != branding_key() or not _current_renderer(manifest) or count < 1):
             return None
         if not (directory / 'report.pptx').is_file():
             return None
@@ -102,7 +112,10 @@ def build_artifact(report_type, report, storage_root):
             if len(result['slide_files']) != len(Presentation(pptx).slides):
                 raise RuntimeError('PPT预览页数与导出文件不一致，请重新准备。')
             manifest = {'version':COMPATIBILITY_VERSION,'artifact_key':key, 'fonts':FONT_ENVIRONMENT, 'branding':branding_key(),
-                        'slide_count':len(result['slide_files']),'sha256':_digest_file(pptx)}
+                        'report_type':report_type, 'slide_count':len(result['slide_files']),'sha256':_digest_file(pptx)}
+            if report_type == 'quality_measurement':
+                from quality_report_styles import RENDERER_VERSION
+                manifest['quality_renderer'] = RENDERER_VERSION
             (staging / 'manifest.json').write_text(json.dumps(manifest))
             if directory.exists():
                 shutil.rmtree(directory)
@@ -123,7 +136,7 @@ def export_preview_manifest(path, storage_root, *, report_type=None, report=None
         manifest = json.loads(Path(path).with_suffix('.preview.json').read_text())
         key = manifest.get('artifact_key','')
         if (not re.fullmatch('[a-f0-9]{64}',key) or manifest.get('version') != COMPATIBILITY_VERSION
-                or manifest.get('branding') != branding_key()):
+                or manifest.get('branding') != branding_key() or not _current_renderer(manifest, report_type)):
             return None
         if report is not None and key != artifact_key(report_type, report, storage_root):
             return None
@@ -134,8 +147,8 @@ def export_preview_manifest(path, storage_root, *, report_type=None, report=None
         return None
 
 
-def preview_slide_path(path, storage_root, page):
-    manifest = export_preview_manifest(path,storage_root)
+def preview_slide_path(path, storage_root, page, *, report_type=None):
+    manifest = export_preview_manifest(path,storage_root,report_type=report_type)
     if not manifest or not 1 <= page <= manifest['slide_count']:
         return None
     image = Path(storage_root) / 'report_presentations' / ('compatible-' + manifest['artifact_key']) / f'slide-{page:02d}.jpg'
