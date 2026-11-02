@@ -65,7 +65,23 @@ def unit_discoveries(connect,cur,rows,phrases,settings,generate=False,log_usage=
             memory.record('service_unit_evidence','cache_hit',f'{reused} 个片区环节复用历史分析或人工配置，未重复调用AI。')
             if log_usage:log_usage(reused_result({'groups_reused':reused},current_model()))
         for offset in range(0,len(pending),6):
-            batch=pending[offset:offset+6];payload=run_ai(connect,'service_unit_evidence',evidence_context(batch,by_id),log_usage)
+            batch=pending[offset:offset+6]
+            try:
+                payload=run_ai(connect,'service_unit_evidence',evidence_context(batch,by_id),log_usage)
+            except ValueError as exc:
+                # Preserve only independently verified groups so one bad photo
+                # cannot make the next attempt pay again for valid summaries.
+                confirmed=getattr(exc,'confirmed_unit_items',{})
+                if confirmed:
+                    with memory.connection() as cursor:
+                        for i,entry in enumerate(batch):
+                            ref=f'G{i+1}'
+                            if ref not in confirmed:continue
+                            context=evidence_context([entry],by_id)
+                            value=validate({'items':{'G1':confirmed[ref]}},context)
+                            memory.put(cursor,memory_key('service_unit_evidence',context),'service_unit_evidence',entry[2]['issue_ids'],value,'')
+                    memory.record('service_unit_evidence','info',f'本批{len(confirmed)}个已通过核验的环节已单独保存，重试将直接复用。')
+                raise
             with memory.connection() as cursor:
                 for i,entry in enumerate(batch):
                     context=evidence_context([entry],by_id);value=payload['items'][f'G{i+1}']

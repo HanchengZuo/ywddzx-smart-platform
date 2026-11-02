@@ -378,3 +378,69 @@ class ServicePersistenceTests(unittest.TestCase):
             self.assertEqual(results[0],results[1])
             self.assertEqual(client.chat.completions.create.call_count,1)
             self.assertEqual(client.chat.completions.create.call_args.kwargs['model'],'qwen3.8-flash')
+
+    def test_unit_repair_only_resends_invalid_group_and_keeps_valid_summary(self):
+        rows=serialize([raw(1,region='浦东',issue_photo='one.jpg'),raw(2,region='松金',issue_photo='two.jpg'),raw(3,region='松金',issue_photo='three.jpg')],catalog())
+        entries=[(u['unit_name'],c['name'],g) for u in hierarchy(rows,{}) for c in u['categories'] for g in c['groups']]
+        context=evidence_context(entries,{r['issue_id']:r for r in rows})
+        client=MagicMock();client.with_options.return_value=client;requests=[]
+        def response(**kwargs):
+            evidence=json.JSONDecoder().raw_decode(kwargs['messages'][1]['content'])[0];requests.append(evidence)
+            payload={'items':{'G1':{'summary':'首组已确认概括','photo_ids':['I1']},'G2':{'summary':'次组实际表现','photo_ids':['I99999']}}} if len(requests)==1 else {'items':{'G2':{'summary':'次组实际表现','photo_ids':[2]}}}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        client.chat.completions.create.side_effect=response
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            result=run_ai(self.connect,'service_unit_evidence',context)
+            self.assertEqual(result['items']['G1']['summary'],'首组已确认概括')
+            self.assertEqual(result['items']['G2']['photo_ids'],['I2'])
+            self.assertEqual([g['ref'] for g in requests[1]['items']],['G2'])
+            self.assertEqual(requests[1]['items'][0]['allowed_photo_refs'],['I2','I3'])
+            self.assertEqual(run_ai(self.connect,'service_unit_evidence',context),result)
+            self.assertEqual(client.chat.completions.create.call_count,2)
+
+    def test_partial_group_cache_survives_failed_batch_and_retry_only_calls_missing_group(self):
+        rows=serialize([raw(1,region='浦东',issue_photo='one.jpg'),raw(2,region='松金',issue_photo='two.jpg'),raw(3,region='松金',issue_photo='three.jpg')],catalog())
+        client=MagicMock();client.with_options.return_value=client;requests=[]
+        def invalid(**kwargs):
+            evidence=json.JSONDecoder().raw_decode(kwargs['messages'][1]['content'])[0];requests.append(evidence)
+            payload={'items':{g['ref']:{'summary':'已核实的实际表现','photo_ids':['I99999']} for g in evidence['items']}}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        client.chat.completions.create.side_effect=invalid
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            with self.assertRaisesRegex(ValueError,'G2'):unit_discoveries(self.connect,None,rows,{},normalize_settings({}),True)
+            with self.connect() as conn,conn.cursor() as cur:
+                cur.execute("SELECT payload FROM inspection_report_ai_memory WHERE operation='service_unit_evidence'")
+                saved=cur.fetchall();self.assertEqual(len(saved),1)
+                self.assertEqual(saved[0]['payload']['items']['G1']['photo_ids'],['I1'])
+            def valid(**kwargs):
+                evidence=json.JSONDecoder().raw_decode(kwargs['messages'][1]['content'])[0];requests.append(evidence)
+                self.assertEqual(len(evidence['items']),1)
+                self.assertEqual([r['issue_id'] for r in evidence['items'][0]['issues']],[2,3])
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"items":{"G1":{"summary":"已核实的实际表现","photo_ids":[3]}}}'))])
+            client.chat.completions.create.side_effect=valid
+            result=unit_discoveries(self.connect,None,rows,{},normalize_settings({}),True)
+            self.assertTrue(all(g['ready'] for u in result for c in u['categories'] for g in c['groups']))
+            self.assertEqual(client.chat.completions.create.call_count,3)
+            unit_discoveries(self.connect,None,rows,{},normalize_settings({}),True)
+            self.assertEqual(client.chat.completions.create.call_count,3)
+
+    def test_unit_transport_failure_retries_original_groups_not_an_empty_context(self):
+        rows=serialize([raw(1,region='浦东',issue_photo='one.jpg'),raw(2,region='松金',issue_photo='two.jpg')],catalog())
+        entries=[(u['unit_name'],c['name'],g) for u in hierarchy(rows,{}) for c in u['categories'] for g in c['groups']]
+        context=evidence_context(entries,{r['issue_id']:r for r in rows})
+        client=MagicMock();client.with_options.return_value=client
+        def response(**kwargs):
+            evidence=json.JSONDecoder().raw_decode(kwargs['messages'][1]['content'])[0]
+            self.assertEqual(len(evidence['items']),2)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({'items':{g['ref']:{'summary':'实际表现','photo_ids':[]} for g in evidence['items']}})))])
+        calls=0
+        def retry(**kwargs):
+            nonlocal calls
+            calls+=1
+            if calls==1:raise RuntimeError('test transport failure')
+            return response(**kwargs)
+        client.chat.completions.create.side_effect=retry
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            result=run_ai(self.connect,'service_unit_evidence',context)
+            self.assertEqual(set(result['items']),{'G1','G2'})
+            self.assertEqual(calls,2)
