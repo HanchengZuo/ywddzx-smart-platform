@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.6.4', date: '2026-11-02', title: '报告统一业务督导中心品牌标识',
+    summary: '六类PPT检查并替换原中国石油LOGO，预览与导出同步采用业务督导中心LOGO。',
+    items: ['封面、页眉、结束页及母版中的旧标识统一等比替换，保持照片、图表和正文不变。',
+      '质量计量报告“通报完毕”页，中央LOGO与文字均按PPT中心线对齐。',
+      '非油历史成稿导出时替换LOGO，不修改历史源文件；六类报告预览缓存统一更新，不调用AI。'] },
   { version: 'v12.6.3', date: '2026-11-02', title: '通知开通提示仅限移动端',
     summary: '电脑浏览器不再自动弹出通知开通窗口，移动端保留能力检测与开通引导。',
     items: ['按设备标识识别手机及平板，兼容iPad桌面模式；电脑窄窗口、触屏电脑不会因布局尺寸被误判。',

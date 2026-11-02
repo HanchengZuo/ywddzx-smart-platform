@@ -15,7 +15,7 @@ The last five editable pages follow full-deck pages 36-40: two section dividers,
 two common-issue summary pages, and three recommendations in a rounded dash-dot frame.
 Only validated evidence-grounded AI text is substituted; no example findings are reused.
 
-Brand assets supplied by the user on 2026-11-02: petrochina-wordmark.png (cover)
-and petrochina-icon.png (all subsequent headers, icon only without a wordmark).
-The renderer replaces legacy header marks after adapting the full deck, preserving
-each image's intrinsic aspect ratio rather than stretching it with slide geometry.
+Branding is shared with all reports through report_branding.py. The original
+petroleum wordmarks are replaced by assets/operations_center_logo.png (user-supplied
+operations-center logo), on the cover and all subsequent headers. The renderer
+preserves its intrinsic aspect ratio after adapting the full deck to 16:9.

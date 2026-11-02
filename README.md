@@ -14,6 +14,12 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.6.4 报告统一品牌标识
+
+使用用户提供的“业务督导中心LOGO.jpg”（实际内容为PNG，原始字节保存在 `backend/assets/operations_center_logo.png`），统一替换六类报告中原有的中国石油LOGO。以已核对的旧品牌图片指纹识别，不按颜色或位置误替换业务照片；覆盖页面、母版、版式及组合图片，完整等比显示，保留非品牌内容与排版。财务报告原无中国石油LOGO，布局不额外改变。
+
+质量计量封面左上角及后续页右上角使用统一标识，“通报完毕”页中央LOGO和文字均以实际PPT宽度计算中心位置。现场服务封面和页眉也采用公共标识，不再输出旧组合字标。非油已有成稿复制导出时同样替换品牌，历史源文件不改写；新LOGO指纹和品牌版本参与六类预览/导出缓存键，避免复用旧品牌缓存，预览仍由导出同一份PPT生成。无AI调用、权限或数据库迁移。
+
 ## v12.6.3 通知开通提示仅限移动端
 
 登录后的“为当前设备开启通知”窗口及主屏幕安装引导只对移动设备显示，按浏览器设备标识（含iPad桌面UA）判断，不按窗口宽度或单独的触摸能力判断；电脑缩小窗口及触屏Windows设备不弹窗。移动端仍需通过原有通知能力、权限、订阅及服务端配置检查，不具备开通条件时保持静默。

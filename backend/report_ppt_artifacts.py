@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from pptx_compatibility import COMPATIBILITY_VERSION
+from report_branding import branding_key
 
 
 def font_environment_key(directory=Path('/usr/local/share/fonts/report-fonts')):
@@ -46,7 +47,7 @@ def artifact_key(report_type, report, storage_root):
     if report_type == 'on_site_service':
         from service_report_presentation import TEMPLATE_FILE as SERVICE_TEMPLATE, RENDERER_VERSION
         source_hash = _digest_file(SERVICE_TEMPLATE) + RENDERER_VERSION
-    value = [COMPATIBILITY_VERSION, FONT_ENVIRONMENT, report_type, report, source_hash]
+    value = [COMPATIBILITY_VERSION, FONT_ENVIRONMENT, branding_key(), report_type, report, source_hash]
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
 
@@ -54,7 +55,8 @@ def _read_artifact(directory, verify_pages=True):
     try:
         manifest = json.loads((directory / 'manifest.json').read_text())
         count = int(manifest['slide_count'])
-        if manifest['version'] != COMPATIBILITY_VERSION or manifest.get('fonts') != FONT_ENVIRONMENT or count < 1:
+        if (manifest['version'] != COMPATIBILITY_VERSION or manifest.get('fonts') != FONT_ENVIRONMENT
+                or manifest.get('branding') != branding_key() or count < 1):
             return None
         if not (directory / 'report.pptx').is_file():
             return None
@@ -99,7 +101,7 @@ def build_artifact(report_type, report, storage_root):
             from pptx import Presentation
             if len(result['slide_files']) != len(Presentation(pptx).slides):
                 raise RuntimeError('PPT预览页数与导出文件不一致，请重新准备。')
-            manifest = {'version':COMPATIBILITY_VERSION,'artifact_key':key, 'fonts':FONT_ENVIRONMENT,
+            manifest = {'version':COMPATIBILITY_VERSION,'artifact_key':key, 'fonts':FONT_ENVIRONMENT, 'branding':branding_key(),
                         'slide_count':len(result['slide_files']),'sha256':_digest_file(pptx)}
             (staging / 'manifest.json').write_text(json.dumps(manifest))
             if directory.exists():
@@ -120,7 +122,8 @@ def export_preview_manifest(path, storage_root, *, report_type=None, report=None
     try:
         manifest = json.loads(Path(path).with_suffix('.preview.json').read_text())
         key = manifest.get('artifact_key','')
-        if not re.fullmatch('[a-f0-9]{64}',key) or manifest.get('version') != COMPATIBILITY_VERSION:
+        if (not re.fullmatch('[a-f0-9]{64}',key) or manifest.get('version') != COMPATIBILITY_VERSION
+                or manifest.get('branding') != branding_key()):
             return None
         if report is not None and key != artifact_key(report_type, report, storage_root):
             return None

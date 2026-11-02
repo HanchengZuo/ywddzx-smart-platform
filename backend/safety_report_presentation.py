@@ -480,5 +480,7 @@ def build_safety_presentation(report, output_path, storage_root=None):
     slide_ids=list(prs.slides._sldIdLst)
     for node in slide_ids:prs.slides._sldIdLst.remove(node)
     for index in SLIDE_ORDER:prs.slides._sldIdLst.append(slide_ids[index])
+    from report_branding import apply_report_branding
+    apply_report_branding(prs)
     output_path=Path(output_path);output_path.parent.mkdir(parents=True,exist_ok=True);prs.save(output_path)
     return {'ppt_path':str(output_path),'slide_count':len(prs.slides)}
