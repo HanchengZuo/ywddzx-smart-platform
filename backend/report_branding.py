@@ -11,8 +11,10 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.oxml.ns import qn
 
 LOGO_FILE = Path(__file__).parent / 'assets/operations_center_logo.png'
-BRANDING_VERSION = 'operations-center-v12.6.4-1'
+BRANDING_VERSION = 'operations-center-v12.6.4-transparent-2'
 LEGACY_LOGO_DIGESTS = frozenset({
+    # The previous operations-center asset had an opaque, off-white background.
+    '269197b9a3df64f869ea93a3fd691b0e37050e1b31fd599209651bbe731d9716',
     '79cdf48ae3d1cf03385d80f2833a19ab2d94cfb906e7da372e42df8f4147ef4b',
     'ce5a3c8bff340a128f6fc6ef9dbddba46122d3158634b47b3d7d74ba539dc774',
     '38d25a44be63bdec82ed31263ef14618eaf2f697879d4370e44f1335b798fe59',
