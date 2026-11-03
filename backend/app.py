@@ -6058,7 +6058,7 @@ def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=N
 def append_inspection_table_scope_filter(cur, user, where_clauses, params, column_sql, scope_key, permissions=None):
     if permissions and permissions.get('_report_version_scope') and column_sql in {'i.inspection_table_id','ins.inspection_table_id'} and checklist_editions.available(cur):
         alias = column_sql.split('.')[0]
-        where_clauses.append(f'{alias}.checklist_version_id IN (SELECT checklist_version_id FROM inspection_report_version_bindings)')
+        where_clauses.append(f'{alias}.checklist_version_id IN ({checklist_editions.report_supported_versions_sql()})')
     scope_ids = get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions)
     if scope_ids is None:
         return True
@@ -12735,6 +12735,8 @@ def write_issue_export_xlsx(
             os.makedirs(export_directory, exist_ok=True)
 
     workbook_options = {
+        # Photo-rich exports can exceed ZIP's 4 GiB file/member limits.
+        "use_zip64": True,
         "strings_to_formulas": False,
         "strings_to_urls": False,
     }

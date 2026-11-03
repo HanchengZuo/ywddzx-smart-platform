@@ -127,7 +127,7 @@
                   >{{ data.catalog.filter((s) => s.mode === mode.key).length }} 条有效规范</small
                 >
               </button>
-              <p>视频短语由 AI 准备并持久复用；现场直接使用“考察类别项目”。两者均可人工调整。</p>
+              <p>视频短语由 AI 准备并持久复用；现场新版使用“内容”，历史版使用“考察类别项目”。两者均可人工调整。</p>
             </aside>
             <div class="workspace">
               <input
@@ -141,14 +141,14 @@
                   <b>规范 {{ standard.external_standard_id }}</b
                   ><span>{{ standard.mode === 'video' ? '视频' : '现场' }}</span>
                 </header>
-                <p>{{ standard.fields['检查内容'] || standard.fields['考察类别项目'] }}</p>
+                <p>{{ standard.fields['检查内容'] || standard.fields['内容'] || standard.fields['考察类别项目'] }}</p>
                 <label
                   >统计环节短语<input
                     :value="draft.phrases[standard.key] ?? standard.phrase"
                     maxlength="30"
                     @input="editPhrase(standard.key, $event.target.value)"
                     :placeholder="
-                      standard.mode === 'video' ? '待调用AI生成，可人工填写' : '考察类别项目'
+                      standard.mode === 'video' ? '待调用AI生成，可人工填写' : '内容 / 考察类别项目'
                     "
                 /></label>
                 <details>
@@ -334,7 +334,7 @@ const panels = [
     number: '03',
     name: '环节分类',
     title: '视频 / 现场环节短语',
-    description: '视频规范由AI归纳短语，现场引用考察类别项目；规范未变直接复用。',
+    description: '视频由AI归纳，现场兼容新版内容与旧版考察类别项目；规范未变直接复用。',
     action: '查看与调整环节',
   },
   {

@@ -97,12 +97,21 @@ def attach_rows(cur, rows, kind='issues'):
     cur.execute(sql.SQL('''SELECT b.id,v.id AS checklist_version_id,v.version_number,v.version_name
         FROM {} b JOIN inspection_checklist_versions v ON v.id=b.checklist_version_id WHERE b.id=ANY(%s)''').format(sql.Identifier(kind)), (ids,))
     mapping = {r['id']:dict(r) for r in cur.fetchall()}
+    represented = {}
+    if kind == 'inspections':
+        cur.execute('''SELECT DISTINCT i.inspection_id,v.id AS checklist_version_id,v.version_number,v.version_name
+            FROM issues i JOIN inspection_checklist_versions v ON v.id=i.checklist_version_id
+            WHERE i.inspection_id=ANY(%s) ORDER BY i.inspection_id,v.version_number''', (ids,))
+        for item in cur.fetchall():
+            represented.setdefault(item['inspection_id'], []).append(dict(item))
     for row in rows:
         item = mapping.get(row.get('id'))
         if item:
             row.update({k:v for k,v in item.items() if k!='id'})
             name = row.get('inspection_table_name') or row.get('table_name') or ''
-            row['inspection_table_display_name'] = f"{name} · v{item['version_number']}"
+            editions = represented.get(row.get('id')) or [item]
+            row['checklist_versions'] = [{k:e[k] for k in ('checklist_version_id','version_number','version_name')} for e in editions]
+            row['inspection_table_display_name'] = name + ' · ' + ' / '.join(f"v{e['version_number']}" for e in editions)
     return rows
 
 
@@ -112,7 +121,16 @@ def append_filter(where, params, values, *, table_column='t.table_name', version
     for value in values or []:
         match = re.fullmatch(r'(.+) · v([1-9][0-9]*)', str(value))
         if match:
-            clauses.append(f'({table_column}=%s AND {version_column} IN (SELECT id FROM inspection_checklist_versions WHERE version_number=%s))')
+            if version_column == 'ins.checklist_version_id':
+                version_match = '''EXISTS(SELECT 1 FROM inspection_checklist_versions filter_v
+                    WHERE filter_v.version_number=%s AND filter_v.inspection_table_id=ins.inspection_table_id
+                    AND (EXISTS(SELECT 1 FROM issues filter_i WHERE filter_i.inspection_id=ins.id
+                        AND filter_i.checklist_version_id=filter_v.id)
+                        OR (ins.checklist_version_id=filter_v.id AND NOT EXISTS(
+                            SELECT 1 FROM issues filter_i WHERE filter_i.inspection_id=ins.id))))'''
+            else:
+                version_match = f'{version_column} IN (SELECT id FROM inspection_checklist_versions WHERE version_number=%s)'
+            clauses.append(f'({table_column}=%s AND {version_match})')
             params.extend([match[1], int(match[2])])
         else:
             plain.append(str(value))
@@ -122,6 +140,16 @@ def append_filter(where, params, values, *, table_column='t.table_name', version
         where.append('('+' OR '.join(clauses)+')')
 
 
+def report_supported_versions_sql():
+    # Only the service adapter explicitly understands both schemas. Future
+    # versions and all other templates retain the original compatibility gate.
+    return '''SELECT checklist_version_id FROM inspection_report_version_bindings
+        UNION SELECT v.id FROM inspection_checklist_versions v JOIN inspection_tables t ON t.id=v.inspection_table_id
+        WHERE t.table_name='现场检查明细表（现场）' AND v.source_key='service-onsite-20260707'
+        AND (SELECT array_agg(f->>'field_label' ORDER BY (f->>'sort_order')::integer)
+            FROM jsonb_array_elements(v.fields) f)=ARRAY['项目','内容','检查评比标准','检查方式']'''
+
+
 def report_guard(cur, table_names):
     if not available(cur):
         return
@@ -129,7 +157,8 @@ def report_guard(cur, table_names):
         FROM inspection_tables t JOIN inspection_report_version_bindings b ON b.inspection_table_id=t.id
         JOIN inspection_checklist_versions bv ON bv.id=b.checklist_version_id
         LEFT JOIN inspection_checklist_versions v ON v.id=t.active_version_id
-        WHERE REPLACE(t.table_name,'加油站','')=ANY(%s) AND (NOT t.is_active OR t.active_version_id IS DISTINCT FROM b.checklist_version_id)''', ([n.replace('加油站','') for n in table_names],))
+        WHERE REPLACE(t.table_name,'加油站','')=ANY(%s) AND (NOT t.is_active OR t.active_version_id IS NULL
+            OR t.active_version_id NOT IN ('''+report_supported_versions_sql()+'))', ([n.replace('加油站','') for n in table_names],))
     rows = cur.fetchall()
     if rows:
         details = '；'.join(f"{r['table_name']}：报告模板需要v{r['required_version']}，当前启用v{r['version_number']}" for r in rows)
