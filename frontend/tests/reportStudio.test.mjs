@@ -48,7 +48,7 @@ test('date saving, generation conditions and force action are unchanged',()=>{
   assert.equal(expression(button,'if'),'canGenerateReports')
   assert.equal(expression(button,'on','click'),'startGeneration({ force: true })')
   assert.equal(normalized(expression(button,'bind','disabled')),
-    'loading || workspaceSaving || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)')
+    'loading || workspaceSaving || templateUnavailable || !!currentReportType.version_warning || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)')
 })
 
 test('all six report types expose HTML reading without generation privileges or a legacy type exclusion',()=>{
@@ -98,7 +98,8 @@ test('generation history remains noninteractive and a configuration mismatch war
   assert.equal(item.tag,'article')
   assert.equal(expression(item,'on','click'),undefined)
   assert.equal(item.props.some(p=>p.name==='tabindex'||(p.name==='role'&&p.value?.content==='button')),false)
-  assert.equal(expression(byClass('workspace-pending-note'),'if'),'hasSavedReportChanges')
+  assert.ok(elements.some(node=>expression(node,'if')==='hasSavedReportChanges' && node.props.some(prop=>prop.name==='class' && prop.value?.content.includes('workspace-pending-note'))))
+  assert.ok(elements.some(node=>expression(node,'if')==='currentReportType.version_warning'))
   assert.match(source,/当前设置与成稿不同，保存后需重新生成才能应用。/)
 })
 

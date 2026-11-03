@@ -7,6 +7,14 @@ from safety_report_data import unit_name, unit_key, REGION_ORDER, period_label, 
 TABLES = {'video': '现场检查明细表（视频）', 'onsite': '现场检查明细表（现场）'}
 POLICY = 'service-first-chapter-124-1'
 
+
+def onsite_category(fields):
+    return fields.get('项目') or fields.get('考察类别区域') or ''
+
+
+def onsite_stage(fields):
+    return fields.get('内容') or fields.get('考察类别项目') or ''
+
 def category_label(value):
     # Remove only score suffixes, not meaningful parentheses in the category itself.
     return re.sub(r'\s*[（(]\s*(?:共|总分|满分)?\s*\d+(?:\.\d+)?\s*分\s*[）)]\s*$', '',str(value or '')).strip() or '未设置类别'
@@ -20,10 +28,10 @@ def serialize(rows, catalog):
     result=[]
     for row in rows:
         standard=standards.get(standard_key(row))
-        if not standard: continue  # Retired standards do not enter the new monthly report.
+        if not standard: continue  # Unknown standards cannot supply a classification.
         data=standard['fields']; mode=standard['mode']
-        category=category_label(data.get('检查类别') if mode=='video' else data.get('考察类别区域'))
-        content=data.get('检查内容','') if mode=='video' else data.get('考察类别项目','')
+        category=category_label(data.get('检查类别') if mode=='video' else onsite_category(data))
+        content=data.get('检查内容','') if mode=='video' else onsite_stage(data)
         result.append({'issue_id':int(row['id']), 'station_id':row['station_id'],
             'station_name':row.get('station_name') or '', 'unit_name':unit_name(row.get('region')),
             'mode':mode,'standard_key':standard['key'],'external_standard_id':standard['external_standard_id'],

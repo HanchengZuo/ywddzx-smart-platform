@@ -224,6 +224,7 @@ def main():
                     ('checklist_standard_registry', {'standard_id','inspection_table_id','checklist_version_id','is_deleted'}),
                     ('checklist_version_events', {'checklist_version_id','action','actor_id','detail'}),
                     ('inspection_report_version_bindings', {'inspection_table_id','checklist_version_id'}),
+                    ('checklist_record_version_corrections', {'reason','record_kind','record_id','before_data'}),
                     ('inspection_tables', {'active_version_id'}),
                     ('issues', {'checklist_version_id'}),
                     ('inspections', {'checklist_version_id'}),

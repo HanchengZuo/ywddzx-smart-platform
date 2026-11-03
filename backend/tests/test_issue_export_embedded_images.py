@@ -11,6 +11,25 @@ from app import normalize_issue_export_options, write_issue_export_xlsx
 
 
 class IssueExportEmbeddedImageTests(unittest.TestCase):
+    def test_large_archives_use_zip64_in_both_photo_modes(self):
+        # Lower the real ZIP threshold instead of allocating multi-gigabyte fixtures.
+        for mode in ('compatible', 'embedded'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                Image.new('RGB', (160, 90), '#2563eb').save(Path(directory) / 'photo.png')
+                output = BytesIO()
+                options = normalize_issue_export_options({'photo_mode': mode,
+                    'include_fields': {'id': True, 'description': True, 'issue_photo': True},
+                    'include_photos': {'issue_photo': True}})
+                rows = [{'id': 1, 'inspection_table_id': 1, 'inspection_table_name': '大文件测试',
+                    'description': '完整问题内容' * 1000, 'issue_photo': '/photo.png'}]
+                with patch('app.STORAGE_ROOT', directory), patch('zipfile.ZIP64_LIMIT', 512):
+                    write_issue_export_xlsx(output, rows, options, {})
+                    output.seek(0)
+                    with zipfile.ZipFile(output) as archive:
+                        self.assertIsNone(archive.testzip())
+                        self.assertIn('xl/worksheets/sheet1.xml', archive.namelist())
+                self.assertIn(b'PK\x06\x06', output.getvalue())
+
     def test_issue_photos_are_embedded_in_cells_instead_of_floating(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_root = Path(temp_dir)

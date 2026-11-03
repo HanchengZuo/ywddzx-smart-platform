@@ -51,7 +51,7 @@
           {{ item.name }}<small>{{ item.count }} 项 · {{ item.groups.length }} 个环节</small>
         </button>
       </div>
-      <p class="nav-note">现场按考察类别区域，视频按检查类别；相同类别合并统计。</p>
+      <p class="nav-note">现场按新版“项目”或旧版“考察类别区域”，视频按“检查类别”；相同类别合并统计。</p>
     </nav>
     <main>
       <header>

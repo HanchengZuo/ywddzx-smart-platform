@@ -1,6 +1,7 @@
 """Service-only evidence queries with the platform's existing data-scope predicates."""
 from psycopg2 import sql
 from service_report_data import TABLES
+import checklist_versions as editions
 
 def fetch_catalog(cur,user,*,removed,table_scope,permissions,physical_name,exists,metadata):
     clauses=['t.is_active=TRUE',"REPLACE(t.table_name,%s,'') IN (%s,%s)"]
@@ -8,18 +9,25 @@ def fetch_catalog(cur,user,*,removed,table_scope,permissions,physical_name,exist
     if not table_scope(cur,user,clauses,params,'t.id','limit_plan_inspection_table_scope',permissions=permissions):return []
     cur.execute('SELECT t.id,t.table_code,t.table_name,t.checklist_mode FROM inspection_tables t WHERE '+' AND '.join(clauses)+' ORDER BY t.id',params)
     tables=list(cur.fetchall()); result=[]
-    cur.execute('SELECT standard_id FROM external_standard_status WHERE NOT is_active')
-    disabled={int(row['standard_id']) for row in cur.fetchall()}
+    versioned = editions.available(cur)
+    fields_by_version = {}
+    if versioned:
+        cur.execute('SELECT id,fields FROM inspection_checklist_versions WHERE id IN ('+editions.report_supported_versions_sql()+')')
+        fields_by_version = {r['id']:r['fields'] for r in cur.fetchall()}
     for table in tables:
         physical=physical_name(table['table_code'])
         if not physical or not exists(cur,physical):continue
-        columns=metadata(cur,table['id'])
+        columns=metadata(cur,table['id']) if not versioned else []
         cur.execute(sql.SQL('SELECT * FROM {} ORDER BY standard_id').format(sql.Identifier(physical)))
         for row in cur.fetchall():
-            if int(row['standard_id']) in disabled:continue
+            if versioned:
+                fields = fields_by_version.get(row.get('checklist_version_id'))
+                if fields is None:continue
+                columns = [(f['field_key'], f['field_label']) for f in fields]
             mode='video' if table['checklist_mode']=='online' else 'onsite'
             identifier=str(row['standard_id'])
             result.append({'key':mode+':'+identifier,'mode':mode,'external_standard_id':identifier,
+                'checklist_version_id':row.get('checklist_version_id'),
                 'fields':{'检查表':table['table_name'],**{label:str(row.get(key) or '').strip() for key,label in columns}}})
     return result
 

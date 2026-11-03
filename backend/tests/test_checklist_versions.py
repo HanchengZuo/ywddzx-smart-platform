@@ -5,6 +5,9 @@ CHECKLIST_VERSION_DB_TEST=1 DB_NAME=checklist_v127_test python -m unittest tests
 import os
 import unittest
 import uuid
+import tempfile
+from io import BytesIO
+from pathlib import Path
 from datetime import date
 from unittest.mock import patch
 
@@ -16,6 +19,7 @@ from psycopg2.extras import Json
 import app as api
 import checklist_versions as editions
 from checklist_version_migration import install
+from checklist_service_history import correct_history
 from external_standard_status import require_active_standards
 
 
@@ -37,6 +41,7 @@ class VersionDatabaseTests(unittest.TestCase):
         with api.get_db_connection() as conn:
             with conn.cursor() as cur:
                 install(cur)
+                correct_history(cur)
                 api.ensure_inspection_checklist_management_schema(cur)
 
     def setUp(self):
@@ -197,7 +202,7 @@ class VersionDatabaseTests(unittest.TestCase):
         current=editions.version(self.cur,family)
         self.assertEqual([f['field_label'] for f in current['fields']],['项目','内容','检查评比标准','检查方式'])
         self.assertEqual(editions.standard_ids(self.cur,current['id']),set(range(11039,11053)))
-        self.cur.execute("SELECT count(*) AS n FROM issues i JOIN inspection_checklist_versions v ON v.id=i.checklist_version_id WHERE i.standard_id BETWEEN 11039 AND 11052 AND v.version_number<>1")
+        self.cur.execute("SELECT count(*) AS n FROM issues i JOIN inspection_checklist_versions v ON v.id=i.checklist_version_id WHERE i.standard_id BETWEEN 11039 AND 11052 AND v.version_number<>2")
         self.assertEqual(self.cur.fetchone()['n'],0)
         before=editions.versions(self.cur,family)
         install(self.cur)
@@ -227,11 +232,11 @@ class VersionDatabaseTests(unittest.TestCase):
                 self.assertEqual(response.status_code,200,(path,response.json))
                 if path=='/api/inspection-reports/types':
                     service=next(r for r in response.json['report_types'] if r['key']=='on_site_service')
-                    self.assertIn('版本',service['version_warning'])
+                    self.assertFalse(service.get('version_warning'))
                 if path=='/api/issues':
                     self.assertIn(' · v1',response.json['items'][0]['inspection_table_display_name'])
-            response=client.post('/api/inspection-reports/generate',headers=headers,json={'report_type':'on_site_service','generation_options':{'date_from':'2026-10-01','date_to':'2026-10-31'}})
-            self.assertEqual(response.status_code,400,response.json)
+            # Check the same gate used by generation without starting a paid job.
+            editions.report_guard(self.cur,['现场检查明细表（现场）','现场检查明细表（视频）'])
             self.cur.execute("SELECT v.id FROM inspection_checklist_versions v JOIN inspection_tables t ON t.id=v.inspection_table_id WHERE v.source_key='service-onsite-20260707'")
             pdf_version=self.cur.fetchone()['id']; self.conn.rollback()
             response=client.get(f'/api/checklist-versions/{pdf_version}/original',headers=headers)
@@ -251,6 +256,26 @@ class VersionDatabaseTests(unittest.TestCase):
             response.close()
             # The read-only file cookie grants neither API edits nor upload.
             self.assertEqual(client.post(f'/api/checklist-versions/{pdf_version}/original').status_code,401)
+
+    def test_original_upload_can_target_old_version_without_changing_new_version(self):
+        v2,_ = self.make_v2()
+        self.request_version(f'/{v2}/activate',method='post',json={'expected_active_version_id':self.v1})
+        with tempfile.TemporaryDirectory() as directory, patch.object(api,'STORAGE_ROOT',directory), \
+             patch.object(api,'INSPECTION_ORIGINALS_STORAGE_DIR',str(Path(directory)/'originals')):
+            def upload(version, content):
+                return self.client.post(f'/api/checklist-versions/{version}/original',
+                    data={'pdf':(BytesIO(content),'版本原件.pdf')},content_type='multipart/form-data')
+            self.assertEqual(upload(v2,b'%PDF-1.4 new').status_code,200)
+            self.assertEqual(upload(self.v1,b'%PDF-1.4 old').status_code,200)
+            first = editions.version(self.cur,self.table_id,self.v1)['original_document']['file_path']
+            self.assertEqual(upload(self.v1,b'%PDF-1.4 old revised').status_code,200)
+            self.assertTrue(Path(api.resolve_storage_abs_path(first)).is_file())
+            for version, expected in ((self.v1,b'%PDF-1.4 old revised'),(v2,b'%PDF-1.4 new')):
+                response=self.client.get(f'/api/checklist-versions/{version}/original')
+                self.assertEqual(response.status_code,200);self.assertEqual(response.data,expected);response.close()
+            self.assertEqual(editions.version(self.cur,self.table_id)['id'],v2)
+            self.user={'id':999999,'role':'station_manager'}
+            self.assertEqual(upload(self.v1,b'%PDF-1.4 denied').status_code,403)
 
 
 if __name__ == '__main__':unittest.main()

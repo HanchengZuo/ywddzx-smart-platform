@@ -27,11 +27,21 @@
         </div>
 
         <div ref="directoryListRef" class="checklist-list">
-          <article v-for="item in checklistItems" :key="item.inspection_table_id" class="checklist-card"
+          <article v-for="item in directoryItems" :key="item.logical_table_id" class="checklist-card"
             :class="{ active: activeItem?.inspection_table_id === item.inspection_table_id }" @click="selectItem(item)">
             <div class="checklist-card-main">
               <div>
                 <h4>{{ item.table_name }}</h4>
+                <label class="version-picker" @click.stop>
+                  <span>检查表版本</span>
+                  <select :value="item.version_id" :aria-label="`${item.table_name}检查表版本`"
+                    @change="selectVersion(item.logical_table_id, $event.target.value)">
+                    <option v-for="edition in versionsByTable.get(item.logical_table_id)" :key="edition.version_id"
+                      :value="edition.version_id">
+                      v{{ edition.version_number }} · {{ edition.version_name }} · {{ edition.is_active ? '当前启用' : '历史 / 未启用' }}
+                    </option>
+                  </select>
+                </label>
                 <span :class="['status-pill', item.is_active ? 'success' : 'neutral']">v{{ item.version_number }} · {{ item.version_name }} · {{ item.is_active ? '当前启用' : '历史 / 未启用' }}</span>
                 <p>{{ item.description || '暂无检查表说明。' }}</p>
               </div>
@@ -59,7 +69,7 @@
               <button class="btn btn-secondary btn-compact" type="button" @click.stop="handlePreviewClick(item)">
                 查看预览
               </button>
-              <label v-if="canManage && !isMobileView" class="btn btn-primary btn-compact upload-label"
+              <label v-if="canManage" class="btn btn-primary btn-compact upload-label"
                 :class="{ disabled: uploadingId === item.inspection_table_id }" @click.stop>
                 <input type="file" accept="application/pdf,.pdf" :disabled="uploadingId === item.inspection_table_id"
                   @change="handlePdfChange(item, $event)" />
@@ -112,6 +122,7 @@
             <div>
               <div class="section-kicker">PDF 原件预览</div>
               <h3>{{ activeItem.table_name }} · v{{ activeItem.version_number }}</h3>
+              <p class="version-context">{{ activeItem.is_active ? '当前启用版本' : '历史 / 未启用版本' }} · PDF、字段与下方规范均对应本版，更新原件不会切换启用版本。</p>
               <p>{{ activeItem.original_filename || '当前检查表暂未上传 PDF 原件。' }}</p>
             </div>
             <div class="preview-actions">
@@ -134,7 +145,7 @@
             </div>
             <div class="meta-item">
               <span>上传人</span>
-              <strong>{{ activeItem.uploaded_by_real_name || activeItem.uploaded_by_username || '-' }}</strong>
+              <strong>{{ activeItem.uploaded_by_name || activeItem.uploaded_by_real_name || activeItem.uploaded_by_username || '-' }}</strong>
             </div>
             <div class="meta-item">
               <span>文件大小</span>
@@ -242,6 +253,7 @@ import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ExternalStandardCard from '@/components/ExternalStandardCard.vue'
 import { paginateByHeight } from '@/utils/heightPagination'
+import { groupOriginalVersions, selectedOriginalVersions } from '@/utils/checklistOriginalVersions'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const checklistCount = computed(() => new Set(checklistItems.value.map(item => item.logical_table_id)).size)
@@ -261,6 +273,14 @@ const actionMessageType = ref('info')
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_checklist_originals)
 const canManage = ref(currentRole === 'root' || Boolean(localPermissions.manage_checklist_originals))
 const checklistItems = ref([])
+const directorySelection = reactive({})
+const versionsByTable = computed(() => groupOriginalVersions(checklistItems.value))
+const directoryItems = computed(() => selectedOriginalVersions(versionsByTable.value, directorySelection))
+const selectVersion = (tableId, versionId) => {
+  directorySelection[tableId] = String(versionId)
+  const item = checklistItems.value.find(item => String(item.version_id) === String(versionId) && item.logical_table_id === tableId)
+  if (item) selectItem(item)
+}
 const externalStandards = ref([])
 const activeTableId = ref('')
 const fieldMap = ref({})
@@ -291,7 +311,7 @@ const externalStandardCount = computed(() => externalStandards.value.length)
 
 const activeItem = computed(() => {
   return checklistItems.value.find((item) => String(item.inspection_table_id) === String(activeTableId.value)) ||
-    checklistItems.value[0] ||
+    directoryItems.value[0] ||
     null
 })
 
@@ -469,6 +489,7 @@ const exportActiveStandards = async () => {
 }
 
 const selectItem = (item) => {
+  directorySelection[item.logical_table_id] = String(item.version_id)
   activeTableId.value = String(item.inspection_table_id)
   fetchFieldsForTable(item.inspection_table_id)
 }
@@ -509,8 +530,8 @@ const fetchOriginals = async () => {
     canManage.value = Boolean(response.data?.can_manage)
 
     if (!checklistItems.value.some((item) => String(item.inspection_table_id) === String(activeTableId.value))) {
-      activeTableId.value = checklistItems.value[0]?.inspection_table_id
-        ? String(checklistItems.value[0].inspection_table_id)
+      activeTableId.value = directoryItems.value[0]?.inspection_table_id
+        ? String(directoryItems.value[0].inspection_table_id)
         : ''
     }
   } catch (error) {
@@ -840,6 +861,12 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 12px;
 }
+
+.checklist-card-main > div { min-width: 0; flex: 1; }
+.version-picker { display: grid; gap: 6px; margin: 12px 0 10px; color: #476079; font-size: 12px; font-weight: 600; }
+.version-picker select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #b5ccdf; border-radius: 9px; background: #fff; color: #163d5b; font-size: 13px; cursor: pointer; }
+.version-picker select:focus-visible { outline: 2px solid #257590; outline-offset: 2px; }
+.version-context { max-width: 620px; line-height: 1.6; color: #476079; }
 
 .table-code {
   color: #2563eb;
