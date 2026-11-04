@@ -14,6 +14,10 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v13.1 待复核筛选
+
+“我的待复核问题”移除规范标签筛选，新增站经理整改结果下拉项（全部、已整改、站级无法整改），桌面和移动端均可使用。后端分页筛选兼容“站经无法整改”等历史别名；旧标签参数不再参与此队列筛选，不影响问题清单的标签展示及巡检问题列表的规范标签功能。保留处室数据范围和复核权限。
+
 ## v13.0 独立整改与复核权限
 
 “我的待整改问题”（`/inspection/my-rectifications`）与“我的待复核问题”（`/inspection/my-reviews`）为独立页面，共用处理组件但不再按角色混用同一菜单。分别配置 `view_my_rectification_issues` / `submit_my_rectification`、`view_my_review_issues` / `submit_my_issue_reviews`，提交权限依赖对应查看权限，可设置为只读。站点默认保留本站整改，两类督导组默认保留全部复核；五类处室默认启用复核，片区不默认开放，也不能用此权限扩大角色范围。角色模板和个人覆盖沿用现有优先级。

@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.1', date: '2026-11-04', title: '待复核整改结果筛选',
+    summary: '移除规范标签筛选，新增站经理整改结果。',
+    items: ['桌面与移动端支持按已整改、站级无法整改筛选，兼容历史结果名称。', '继续按部门范围在后端分页查询，筛选条件提示同步更新，复核权限与流程不变。'] },
   { version: 'v13.0', date: '2026-11-04', title: '独立整改复核菜单与处室复核',
     summary: '我的待整改与我的待复核拆分独立页面，查看与提交分别授权。',
     items: ['保留站点本站整改和两类督导组全部复核默认能力，支持关闭提交后只读查看。',

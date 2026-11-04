@@ -107,6 +107,11 @@
             <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
           </div>
           <ChecklistVersionSelect v-else-if="key === 'inspectionTableName'" v-model="filters[key]" :options="inspectionTableOptions" />
+          <select v-else-if="key === 'rectificationResult'" v-model="filters.rectificationResult" aria-label="站经理整改结果">
+            <option value="">全部整改结果</option>
+            <option value="已整改">已整改</option>
+            <option value="站级无法整改">站级无法整改</option>
+          </select>
           <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" :placeholder="isMobileReview ? '搜索并多选' + label : undefined" />
           <template v-else-if="key === 'keyword'">
             <input id="review-keyword" v-model="filters.keyword" type="search" placeholder="搜索规范详情、问题描述、整改说明等" maxlength="1000" enterkeyhint="search" aria-label="关键词搜索" aria-describedby="review-keyword-hint" @keydown.enter.prevent="!$event.isComposing && !loading && applyFilters()" />
@@ -633,7 +638,7 @@ import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
-import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
+import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
@@ -821,8 +826,7 @@ const inspectionTableOptions = computed(() => uniqueSortedOptions(isReviewQueue.
 
 const reviewMultiOptions = computed(() => ({
   region: regionOptions.value, station: stationOptions.value, inspectionTableName: inspectionTableOptions.value,
-  inspector: uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.inspectors || [] : issues.value.map(item => item.inspector)),
-  standardTags: uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.standard_tags || [] : issues.value.flatMap(item => (item.standard_tags || []).map(issueTagLabel)))
+  inspector: uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.inspectors || [] : issues.value.map(item => item.inspector))
 }))
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
@@ -1193,7 +1197,7 @@ const applyFilters = () => {
   }
   // Mobile applies only its visible fields, preserving desktop draft/applied conditions.
   appliedFilters.value = JSON.parse(JSON.stringify(isMobileReview.value
-    ? { ...appliedFilters.value, station: filters.value.station, inspectionTableName: filters.value.inspectionTableName, keyword: filters.value.keyword }
+    ? { ...appliedFilters.value, station: filters.value.station, inspectionTableName: filters.value.inspectionTableName, rectificationResult: filters.value.rectificationResult, keyword: filters.value.keyword }
     : filters.value))
   acceptingPage = true; page.value = 1; acceptingPage = false
   fetchMyIssues()
