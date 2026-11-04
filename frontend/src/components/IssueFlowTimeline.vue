@@ -8,7 +8,7 @@
         <span class="event-number">{{ index + 1 }}</span>
         <div class="event-top"><span class="stage-pill">{{ event.stage_label || '巡检流程' }}</span><time>{{ event.created_at || '时间未记录' }}</time></div>
         <div class="flow-event-heading"><strong>{{ event.action_label }}</strong></div>
-        <p v-if="event.result && event.result !== event.action_label" class="event-result">处理结果：{{ event.result }}</p>
+        <p v-if="event.result && event.result !== event.action_label" class="event-result">处理结果：{{ rectificationResultLabel(event.result) }}</p>
         <div class="flow-event-meta">操作人：{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮整改复核</span></div>
         <div v-if="event.from_label || event.from_status" class="status-path"><span>{{ event.from_label || event.from_status }}</span><b>→</b><strong>{{ event.to_label || event.to_status }}</strong></div>
         <p v-if="event.note" class="event-note"><span>处理说明</span>{{ event.note }}</p>
@@ -22,6 +22,7 @@
   </section>
 </template>
 <script setup>
+import { rectificationResultLabel } from '../utils/issueWorkflow'
 defineProps({ loading: Boolean, error: String, events: { type: Array, default: () => [] }, resolvePhoto: { type: Function, default: path => path } })
 defineEmits(['photo'])
 </script>

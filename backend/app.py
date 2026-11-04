@@ -6479,7 +6479,7 @@ def resolve_issue_review_transition(value, rectification_result=None, checklist_
         return {
             "review_result": review_result,
             "new_status": "已闭环" if review_result == "整改通过" else "站级无法整改",
-            "photo_required": review_result == "整改通过" and checklist_mode != "online",
+            "photo_required": review_result == "整改通过" and checklist_mode != "online" and canonical_issue_result(rectification_result) != "站经无法整改",
             "photo_allowed": review_result == "整改通过",
             "returns_to_station": False,
         }
@@ -7231,7 +7231,7 @@ ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("是否优秀", "is_excellent"),
     ("审核结果", "audit_result"),
     ("问题照片", "issue_photo"),
-    ("站经理整改结果", "rectification_result"),
+    ("站点整改结果", "rectification_result"),
     ("站点反馈整改说明", "rectification_note"),
     ("整改时间", "rectification_at"),
     ("站点反馈整改照片", "rectification_photo"),
@@ -26346,7 +26346,12 @@ def get_pending_review_filter_options():
         row = cur.fetchone() or {}
         options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
                    for key in ('regions', 'stations', 'inspectors', 'inspection_tables')}
-        return jsonify(success=True, filter_options=options)
+        scope_tables = []
+        if has_role_default_checklist_scope(user):
+            cur.execute("SELECT id,table_name,is_active FROM inspection_tables WHERE id=ANY(%s) ORDER BY id",
+                        (get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True),))
+            scope_tables = [dict(table) for table in cur.fetchall()]
+        return jsonify(success=True, filter_options=options, scope_tables=scope_tables)
     except Exception:
         logging.exception('Failed to load pending review facets')
         return jsonify(success=False, error='读取筛选项失败，请重试。'), 500
@@ -30661,7 +30666,7 @@ def update_issue(issue_id):
 
     try:
         rectification_result = normalize_optional_issue_result(
-            data.get("rectification_result"), "站经理整改结果"
+            data.get("rectification_result"), "站点整改结果"
         )
         review_result = normalize_optional_issue_result(
             data.get("review_result"),

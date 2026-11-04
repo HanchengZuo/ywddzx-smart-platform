@@ -146,6 +146,9 @@ class QueueScopeDatabaseTests(unittest.TestCase):
                 self.assertEqual(status,200)
                 self.assertEqual(set(facets['filter_options']['inspection_tables']),
                                  {r['inspection_table_name'] for r in body['items']})
+                if role in api.ROLE_DEFAULT_CHECKLIST_SCOPES:
+                    self.assertEqual({r['table_name'] for r in facets['scope_tables']},
+                                     {r['inspection_table_name'] for r in body['items']})
                 self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),len(ids))
         self.role('quality_safety')
         body,status=self.call('/api/my-review-issues?issue_id=45&inspection_tables=["财务检查表（现场）"]',

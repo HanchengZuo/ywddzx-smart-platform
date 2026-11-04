@@ -6,7 +6,8 @@ import { captureIssueListPosition, restoreIssueListPosition } from '../src/utils
 
 function fixture({ nested = false } = {}) {
   const scroller = (top, left = 0, parentElement = null) => ({
-    isConnected: true, scrollTop: top, scrollLeft: left, overflowY: 'auto', parentElement, calls: [],
+    isConnected: true, scrollTop: top, scrollLeft: left, overflowY: 'auto', overflowX: 'auto',
+    scrollHeight: 6000, clientHeight: 900, scrollWidth: 3000, clientWidth: 1000, parentElement, calls: [],
     scrollTo(value) { this.scrollTop = value.top; this.scrollLeft = value.left; this.calls.push(value) },
   })
   const documentScroller = scroller(0)
@@ -68,6 +69,20 @@ test('desktop preserves both horizontal table position and outer content viewpor
   assert.equal(inner.scrollTop, 700)
   assert.equal(inner.scrollLeft, 900)
   assert.equal(root.rows[1].getBoundingClientRect().top, position.top)
+})
+
+test('horizontal-only table restores x without stealing vertical anchoring from the page', () => {
+  const { root, content, inner, makeRow } = fixture({ nested: true })
+  inner.scrollHeight = inner.clientHeight
+  inner.scrollTop = 0
+  const position = captureIssueListPosition(root, 2)
+  root.rows = [makeRow(1, 100), makeRow(3, 1600)]
+  content.scrollTop = 0
+  inner.scrollLeft = 0
+  restoreIssueListPosition(root, position)
+  assert.equal(content.scrollTop, 1900)
+  assert.equal(inner.scrollTop, 0)
+  assert.equal(inner.scrollLeft, 900)
 })
 
 test('empty queues, hidden/unmounted views and absent snapshots safely do nothing', () => {

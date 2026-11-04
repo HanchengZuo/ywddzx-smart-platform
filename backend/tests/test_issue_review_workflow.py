@@ -34,7 +34,7 @@ class IssueReviewWorkflowTests(unittest.TestCase):
             with self.subTest(station=station):
                 transition = resolve_issue_review_transition('整改通过', station)
                 self.assertEqual(transition, dict(review_result='整改通过', new_status='已闭环',
-                    photo_required=True, photo_allowed=True, returns_to_station=False))
+                    photo_required=False, photo_allowed=True, returns_to_station=False))
 
     def test_legacy_ordinary_approval_is_compatible(self):
         self.assertEqual(resolve_issue_review_transition('已整改', '已整改')['review_result'], '整改通过')
@@ -184,13 +184,21 @@ class ReviewSubmissionTests(unittest.TestCase):
                 saved.assert_called_once()
                 conn.commit.assert_called_once()
 
-    def test_unable_rectified_approval_still_requires_photo_and_uses_existing_authorization_and_state_guards(self):
-        for args, expected in [({}, 400), ({'photo':True, 'role':'station_manager'}, 403),
+    def test_unable_rectified_approval_preserves_authorization_and_state_guards(self):
+        for args, expected in [({'photo':True, 'role':'station_manager'}, 403),
                                ({'photo':True, 'audit':'pending'}, 409), ({'photo':True, 'status':'已闭环'}, 400)]:
             with self.subTest(args=args):
                 _, code, _, conn, saved, event = self.submit(result='整改通过', station_result='站经无法整改', **args)
                 self.assertEqual(code, expected)
                 saved.assert_not_called(); event.assert_not_called(); conn.commit.assert_not_called()
+
+    def test_unable_approval_photo_is_optional_even_for_offline_or_unknown_modes(self):
+        for mode in ('offline','online',None):
+            body,code,_,conn,saved,event=self.submit(result='整改通过',station_result='站级无法整改',checklist_mode=mode)
+            self.assertEqual((code,body['status']),(200,'已闭环'))
+            saved.assert_not_called()
+            self.assertIsNone(event.call_args.args[-1])
+            conn.commit.assert_called_once()
 
     def test_video_approval_accepts_no_photo_or_saves_optional_photo_for_both_rectification_branches(self):
         for station in ('已整改', '站经无法整改'):
@@ -327,6 +335,8 @@ class UnableClosureDatabaseTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()['photo_path'],'rectifications/fixture.jpg')
 
     def test_offline_without_photo_cannot_be_overridden_by_video_form_field(self):
+        self.cur.execute("UPDATE issues SET rectification_result='已整改' WHERE id=42")
+        self.admin.commit()
         with self.dependencies():
             body, code = self.submit(photo=False, claimed_mode='online')
         self.assertEqual(code,400); self.assertEqual(body['error'],'请上传复核照片。')
