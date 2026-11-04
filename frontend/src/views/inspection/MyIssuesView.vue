@@ -19,6 +19,9 @@
         <div class="summary-value summary-value-small">
           {{ queueScopeLabel }}
         </div>
+        <div v-if="departmentQueue && scopeTables.length" class="scope-checklists" aria-label="本部门检查表">
+          <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
+        </div>
         <div class="summary-desc">
           {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，复核说明选填，照片要求随结论变化' : '仅可查看，提交处理权限尚未开启' }}
         </div>
@@ -30,9 +33,6 @@
         <div class="summary-desc">复核或申诉被驳回，需要继续整改的问题</div>
       </div>
     </div>
-    <p v-if="departmentQueue" class="queue-hint card-surface" style="padding: 14px 18px">
-      仅显示本部门所属检查表的待复核问题（含历史版本）。此范围固定，不受巡检问题列表权限影响。
-    </p>
 
     <template v-if="currentRole === 'station_manager'">
       <div v-for="notice in returnNotices" :key="notice.kind" class="return-overview-alert card-surface"
@@ -107,7 +107,7 @@
             <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
           </div>
           <ChecklistVersionSelect v-else-if="key === 'inspectionTableName'" v-model="filters[key]" :options="inspectionTableOptions" />
-          <select v-else-if="key === 'rectificationResult'" v-model="filters.rectificationResult" aria-label="站经理整改结果">
+          <select v-else-if="key === 'rectificationResult'" v-model="filters.rectificationResult" aria-label="站点整改结果">
             <option value="">全部整改结果</option>
             <option value="已整改">已整改</option>
             <option value="站级无法整改">站级无法整改</option>
@@ -126,7 +126,6 @@
           {{ isReviewQueue ? loading ? '筛选加载中...' : '开始筛选' : loading ? '刷新中...' : '刷新数据' }}
         </button>
       </div>
-      <p v-if="isReviewQueue" class="queue-hint">默认不限月份，查询全部待复核问题；调整条件后点击“开始筛选”，每次只加载当前页。</p>
       <p v-if="optionsLoading" class="queue-hint" role="status">正在准备完整筛选选项，不影响清单加载…</p>
       <p v-if="optionsError" class="queue-error">{{ optionsError }} <button class="btn btn-secondary" @click="fetchReviewOptions">重试筛选选项</button></p>
     </div>
@@ -194,8 +193,8 @@
               </div>
             </div>
 
-            <template v-if="isSupervisorLike">
-              <div class="mobile-card-row"><span>整改结果</span><strong>{{ item.rectification_result || '暂无' }}</strong>
+            <template v-if="isReviewQueue">
+              <div class="mobile-card-row"><span>站点整改结果</span><strong>{{ rectificationResultLabel(item.rectification_result) }}</strong>
               </div>
               <div class="mobile-card-row mobile-card-row-top">
                 <span>整改说明</span>
@@ -213,13 +212,13 @@
               <span>问题照片</span>
             </button>
 
-            <button v-if="isSupervisorLike && item.rectification_photo" class="mobile-image-btn"
+            <button v-if="isReviewQueue && item.rectification_photo" class="mobile-image-btn"
               type="button" @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="整改照片" />
               <span>整改照片</span>
             </button>
 
-            <button v-if="isSupervisorLike && item.review_photo" class="mobile-image-btn" type="button"
+            <button v-if="isReviewQueue && item.review_photo" class="mobile-image-btn" type="button"
               @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
               <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
               <span>复核照片</span>
@@ -267,12 +266,14 @@
       </div>
     </div>
 
-    <div class="table-card card-surface">
+    <div ref="tableCardRef" class="table-card card-surface" :class="{ 'fullscreen-table-card': tableFullscreen, 'review-table-card': isReviewQueue }">
       <div class="table-card-head">
         <div>
           <div class="filter-kicker">待办清单</div>
-          <h3>问题字段显示</h3>
+          <h3>{{ tableFullscreen ? '全屏查看待办' : '待办明细' }}</h3>
         </div>
+        <div class="table-view-actions">
+          <button v-if="isReviewQueue && !isMobileView" class="btn btn-secondary" type="button" :aria-pressed="tableFullscreen" @click="toggleTableFullscreen">{{ tableFullscreen ? '退出全屏' : '全屏显示' }}</button>
         <div ref="columnSettingsRef" class="column-settings-wrap">
           <button class="btn btn-secondary column-settings-btn" type="button" @click.stop="toggleColumnSettings">
             字段显示 {{ visibleMyIssueColumns.length }}/{{ myIssueColumnDefinitions.length }}
@@ -304,8 +305,9 @@
           </div>
         </div>
       </div>
+      </div>
       <div class="table-scroll-wrap">
-        <div class="table-scroll">
+        <div ref="tableScrollRef" class="table-scroll">
           <table class="issues-table">
             <thead>
               <tr>
@@ -321,7 +323,7 @@
                 <th v-if="isMyIssueColumnVisible('standard_detail')">规范详情</th>
                 <th v-if="isMyIssueColumnVisible('description')">问题描述</th>
                 <th v-if="isMyIssueColumnVisible('issue_photo')">问题照片</th>
-                <th v-if="isMyIssueColumnVisible('rectification_result')">站经理整改结果</th>
+                <th v-if="isMyIssueColumnVisible('rectification_result')">站点整改结果</th>
                 <th v-if="isMyIssueColumnVisible('rectification_note')">站点反馈整改说明</th>
                 <th v-if="isMyIssueColumnVisible('rectification_at')">整改时间</th>
                 <th v-if="isMyIssueColumnVisible('rectification_photo')">站点反馈整改照片</th>
@@ -361,7 +363,7 @@
                     <img :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片" />
                   </button>
                 </td>
-                <td v-if="isMyIssueColumnVisible('rectification_result')">{{ item.rectification_result || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('rectification_result')">{{ rectificationResultLabel(item.rectification_result) }}</td>
                 <td v-if="isMyIssueColumnVisible('rectification_note')" class="long-text">{{ item.rectification_note || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('rectification_at')" class="nowrap-col">{{ item.rectification_at || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('rectification_photo')">
@@ -440,6 +442,9 @@
         </div>
       </div>
 
+      <TableHorizontalNavigator v-if="isReviewQueue" :target="tableScrollRef" label="待办清单"
+        :disabled="isMobileView || tableFullscreen || columnSettingsOpen || actionDrawer.visible || !!flowDialog || standardDetailState.visible || previewState.visible"
+        :refresh-key="`${page}:${paginatedData.length}:${visibleMyIssueColumns.length}`" />
       <div class="pagination-bar">
         <div class="pagination-summary">共 {{ resultTotal }} 条</div>
         <div class="pagination-controls">
@@ -458,8 +463,10 @@
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
       </div>
+      <div ref="overlayHostRef" class="fullscreen-overlay-host"></div>
     </div>
 
+    <Teleport :to="tableFullscreen && overlayHostRef ? overlayHostRef : 'body'">
     <div v-if="flowDialog" class="drawer-mask" @click.self="closeFlowDialog">
       <div class="drawer-panel" role="dialog" aria-modal="true" aria-label="问题流转记录">
         <div class="drawer-header"><div><h3>问题流转记录</h3><p>{{ flowDialog.station }}｜问题 ID {{ flowDialog.id }}</p></div>
@@ -577,7 +584,7 @@
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
-              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode)" class="optional-field-tag">选填</span></label>
+              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode, actionDrawer.item?.rectification_result)" class="optional-field-tag">选填</span></label>
               <InspectionPhotoUpload ref="reviewPhotoUploadRef" v-model="actionForm.reviewPhotoFile" id-prefix="review-photo"
                 label="复核照片" :disabled="submittingAction"
                 :active="actionDrawer.visible && !previewState.visible && !standardDetailState.visible"
@@ -590,15 +597,12 @@
 
           <div class="drawer-actions">
             <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction || reviewPhotoProcessing">
-              {{ submittingAction ? '提交中...' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
+              <span v-if="submittingAction" class="submit-spinner" aria-hidden="true"></span>{{ submittingAction ? '正在提交，请稍候…' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
             </button>
             <button class="btn btn-secondary" type="button" @click="closeActionDrawer"
               :disabled="submittingAction">取消</button>
           </div>
 
-          <transition name="toast-fade">
-            <div v-if="actionMessage" class="submit-toast" :class="actionMessageType">{{ actionMessage }}</div>
-          </transition>
         </div>
       </div>
     </div>
@@ -622,6 +626,14 @@
         </div>
       </div>
     </div>
+  <Transition name="toast-fade">
+    <div v-if="actionMessage" class="queue-action-toast" :class="actionMessageType" :role="actionMessageType === 'error' ? 'alert' : 'status'" aria-live="polite">
+      <span class="queue-toast-icon" aria-hidden="true">{{ actionMessageType === 'success' ? '✓' : '!' }}</span>
+      <div><strong>{{ actionMessageType === 'success' ? '处理成功' : actionMessageType === 'error' ? '请检查后重试' : '操作提示' }}</strong><p>{{ actionMessage }}</p></div>
+      <button type="button" aria-label="关闭提示" @click="actionMessage = ''">×</button>
+    </div>
+  </Transition>
+  </Teleport>
   </div>
   <AppealSubmitDialog v-if="appealItem" :item="appealItem" @close="appealItem = null" @submitted="appealSubmitted" />
   <StationLocationReminder ref="stationLocationRef" />
@@ -629,6 +641,7 @@
 
 <script setup>
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
+import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
 import { useRouter } from 'vue-router'
 import { canSubmitIssueQueue, departmentReviewRoles } from '@/utils/issueQueueAccess.js'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
@@ -636,7 +649,7 @@ import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
-import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
+import { isUnableRectification, rectificationResultLabel, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -726,6 +739,7 @@ const isReviewQueue = computed(() => currentRole.value !== 'station_manager')
 const appliedFilters = ref(JSON.parse(JSON.stringify(filters.value)))
 const serverTotal = ref(0), listError = ref(''), optionsError = ref(''), optionsLoading = ref(false)
 const serverOptions = ref({})
+const scopeTables = ref([])
 let listController, optionsController, listSequence = 0, initialized = false, acceptingPage = false
 
 const isMobileView = ref(false)
@@ -733,6 +747,33 @@ const isMobileReview = computed(() => isMobileView.value && isReviewQueue.value)
 const visibleReviewFilterDefinitions = computed(() => isMobileReview.value ? mobileReviewFilterDefinitions : reviewFilterDefinitions)
 const showMobileFilters = ref(false)
 const columnSettingsOpen = ref(false)
+const tableCardRef = ref(null), tableScrollRef = ref(null), overlayHostRef = ref(null), tableFullscreen = ref(false)
+let previousBodyOverflow = ''
+async function exitTableFullscreen() {
+  tableFullscreen.value = false
+  document.body.style.overflow = previousBodyOverflow
+  if (document.fullscreenElement === tableCardRef.value) {
+    try { await document.exitFullscreen() } catch { /* Fixed-position fallback is already restored. */ }
+  }
+}
+async function toggleTableFullscreen() {
+  if (tableFullscreen.value) return exitTableFullscreen()
+  previousBodyOverflow = document.body.style.overflow
+  tableFullscreen.value = true
+  document.body.style.overflow = 'hidden'
+  columnSettingsOpen.value = false
+  await nextTick()
+  try { await tableCardRef.value?.requestFullscreen?.() } catch { /* Use a fixed-position fullscreen when unsupported. */ }
+}
+function handleFullscreenChange() {
+  if (!document.fullscreenElement && tableFullscreen.value) {
+    tableFullscreen.value = false
+    document.body.style.overflow = previousBodyOverflow
+  }
+}
+function handleFullscreenKey(event) {
+  if (event.key === 'Escape' && tableFullscreen.value && !document.fullscreenElement && !actionDrawer.value.visible && !previewState.value.visible && !standardDetailState.value.visible && !flowDialog.value) exitTableFullscreen()
+}
 
 const MY_ISSUES_COLUMNS_STORAGE_KEY = 'my_issues_visible_columns_v1'
 const MY_ISSUES_MOBILE_STATION_STORAGE_KEY = 'my_issues_mobile_station_filter_v1'
@@ -749,7 +790,7 @@ const myIssueColumnDefinitions = [
   { key: 'standard_detail', label: '规范详情', group: '规范问题' },
   { key: 'description', label: '问题描述', group: '规范问题' },
   { key: 'issue_photo', label: '问题照片', group: '规范问题' },
-  { key: 'rectification_result', label: '站经理整改结果', group: '整改复核' },
+  { key: 'rectification_result', label: '站点整改结果', group: '整改复核' },
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核' },
   { key: 'rectification_at', label: '整改时间', group: '整改复核' },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核' },
@@ -762,6 +803,7 @@ const myIssueColumnDefinitions = [
 ]
 const defaultMyIssueColumnKeys = new Set([
   'id',
+  ...(isReviewQueue.value ? ['month', 'region'] : []),
   'time',
   'station',
   'inspection_table_name',
@@ -773,7 +815,7 @@ const defaultMyIssueColumnKeys = new Set([
   'rectification_note',
   'rectification_at',
   'rectification_photo',
-  'review_photo',
+  ...(isReviewQueue.value ? [] : ['review_photo']),
   'status',
   'action'
 ])
@@ -785,6 +827,9 @@ const buildDefaultMyIssueColumnVisibility = () => Object.fromEntries(
 const loadMyIssueColumnVisibility = () => {
   try {
     const parsed = JSON.parse(localStorage.getItem(MY_ISSUES_COLUMNS_STORAGE_KEY) || '{}')
+    const oldDefaultKeys = new Set([...defaultMyIssueColumnKeys].filter(key => !['month', 'region'].includes(key)).concat('review_photo'))
+    const wasOldDefault = myIssueColumnDefinitions.every(column => parsed[column.key] === oldDefaultKeys.has(column.key))
+    if (wasOldDefault) return buildDefaultMyIssueColumnVisibility()
     return Object.fromEntries(
       myIssueColumnDefinitions.map((column) => [
         column.key,
@@ -1131,9 +1176,9 @@ const reviewOutcomeHint = computed(() => {
     return {
       type: 'closed',
       title: '将完成问题闭环',
-      description: reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode)
+      description: reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
         ? '确认整改有效后，请上传能够反映复核结果的照片。'
-        : '视频检查表的复核照片为选填，可不上传；提交后问题将变为已闭环。'
+        : '本次复核照片为选填，可不上传；提交后问题将变为已闭环。'
     }
   }
 
@@ -1211,6 +1256,7 @@ const fetchReviewOptions = async () => {
     const { data } = await axios.get('/api/my-review-issues/filter-options', { signal: optionsController.signal })
     if (!data?.success) throw new Error(data?.error)
     serverOptions.value = data.filter_options || {}
+    scopeTables.value = data.scope_tables || []
   } catch (error) {
     if (!axios.isCancel(error)) optionsError.value = '筛选选项暂未加载成功，请重试。'
   } finally { optionsLoading.value = false }
@@ -1354,7 +1400,7 @@ const showActionToast = (message, type = 'info') => {
   actionMessageTimer = setTimeout(() => {
     actionMessage.value = ''
     actionMessageTimer = null
-  }, 2200)
+  }, type === 'success' ? 4500 : 6500)
 }
 
 const submitAction = async () => {
@@ -1417,7 +1463,7 @@ const submitAction = async () => {
       showActionToast('请选择复核结果。', 'error')
       return
     }
-    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode)
+    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
     if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
       showActionToast('请上传复核照片。', 'error')
       return
@@ -1439,6 +1485,7 @@ const submitAction = async () => {
       `/api/issues/${actionDrawer.value.item.id}/review`,
       formData
     )
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
     await fetchMyIssues({ preserveList: true })
     closeActionDrawer()
     await nextTick()
@@ -1466,6 +1513,7 @@ const updateResponsiveState = () => {
   const nextIsMobile = window.matchMedia?.('(max-width: 768px)').matches ?? false
   if (nextIsMobile === isMobileView.value) return
   isMobileView.value = nextIsMobile
+  if (nextIsMobile && tableFullscreen.value) exitTableFullscreen()
   pageSize.value = nextIsMobile ? 5 : 20
   if (nextIsMobile) {
     restoreMobileStationFilter()
@@ -1473,6 +1521,8 @@ const updateResponsiveState = () => {
 }
 
 onMounted(() => {
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('keydown', handleFullscreenKey)
   document.addEventListener('click', handleClickOutside)
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
@@ -1483,6 +1533,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('keydown', handleFullscreenKey)
+  if (tableFullscreen.value) exitTableFullscreen()
   listSequence++; listController?.abort(); optionsController?.abort(); initialized = false
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateResponsiveState)
@@ -1495,6 +1548,25 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.scope-checklists { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; max-width:680px; }
+.scope-checklists > span { display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border:1px solid #cbdde8; border-radius:8px; background:#eaf3f8; color:#244e69; font-size:12px; font-weight:600; line-height:1.5; }
+.scope-checklists small { color:#64748b; font-weight:400; }
+.table-view-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.review-table-card .table-scroll { max-height:none; overflow-x:auto; }
+.review-table-card .table-scroll-wrap { min-width:0; }
+.fullscreen-table-card { position:fixed; inset:0; height:100dvh; z-index:3000; box-sizing:border-box; margin:0; padding:20px; border-radius:0; overflow:auto; overscroll-behavior:contain; background:#fff; }
+.fullscreen-table-card:fullscreen { width:100%; max-width:none; }
+.fullscreen-table-card .table-card-head { position:sticky; top:-20px; z-index:55; background:white; padding:16px 0; }
+.fullscreen-overlay-host { position:relative; z-index:4000; }
+.queue-action-toast { position:fixed; z-index:16000; top:22px; left:50%; transform:translateX(-50%); display:flex; align-items:flex-start; gap:12px; width:max-content; max-width:min(560px,calc(100vw - 32px)); padding:16px 18px; box-sizing:border-box; border:1px solid #bdd9e9; border-radius:12px; box-shadow:0 12px 36px #17384c26; color:#214c68; background:#f2f8fc; }
+.queue-action-toast.success { color:#176452; border-color:#a8d4c1; background:#effaf5; }
+.queue-action-toast.error { color:#9c3337; border-color:#e6b9bc; background:#fff4f4; }
+.queue-action-toast p { margin:5px 0 0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.queue-action-toast button { border:0; background:none; color:inherit; font-size:20px; padding:0 3px; cursor:pointer; }
+.queue-toast-icon { display:grid; place-items:center; width:26px; height:26px; flex-shrink:0; border:1px solid currentColor; border-radius:50%; font-weight:700; }
+.submit-spinner { display:inline-block; width:13px; height:13px; margin-right:8px; border:2px solid #ffffff66; border-top-color:#fff; border-radius:50%; animation:queue-spin .8s linear infinite; }
+@keyframes queue-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .submit-spinner { animation:none; } }
 .queue-hint { margin: 12px 0 0; color: #64748b; font-size: 13px; }
 .queue-error { padding: 14px; color: #b42318; }
 .queue-progress { display: flex; align-items: center; gap: 14px; padding: 18px; margin-bottom: 16px; color: #265d91; }

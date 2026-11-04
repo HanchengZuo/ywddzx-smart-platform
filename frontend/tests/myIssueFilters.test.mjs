@@ -30,7 +30,7 @@ test('server review defaults include all dates and serialize full filter values'
 })
 
 test('mobile review exposes station, table and keyword without restricting desktop definitions', () => {
-  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表'], ['rectificationResult', '站经理整改结果'], ['keyword', '关键词搜索']])
+  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表'], ['rectificationResult', '站点整改结果'], ['keyword', '关键词搜索']])
   assert.equal(reviewFilterDefinitions.length, 12)
 })
 

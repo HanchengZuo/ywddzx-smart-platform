@@ -2,10 +2,10 @@ export const reviewFilterDefinitions = [
   ['id', '问题ID'], ['month', '检查月度'], ['dateRange', '检查时间范围'],
   ['region', '站点所属地'], ['station', '站点名称'], ['stationManager', '站点负责人'],
   ['inspector', '检查人员'], ['inspectionTableName', '检查表'], ['standardId', '外部规范ID'],
-  ['standardDetail', '规范详情'], ['description', '问题描述'], ['rectificationResult', '站经理整改结果']
+  ['standardDetail', '规范详情'], ['description', '问题描述'], ['rectificationResult', '站点整改结果']
 ]
 export const emptyReviewFilters = () => ({ id: '', month: '', dateFrom: '', dateTo: '', region: [], station: [], stationManager: '', inspector: [], inspectionTableName: [], standardId: '', standardDetail: '', rectificationResult: '', description: '', keyword: '' })
-export const mobileReviewFilterDefinitions = [...reviewFilterDefinitions.filter(([key]) => ['station', 'inspectionTableName'].includes(key)), ['rectificationResult', '站经理整改结果'], ['keyword', '关键词搜索']]
+export const mobileReviewFilterDefinitions = [...reviewFilterDefinitions.filter(([key]) => ['station', 'inspectionTableName'].includes(key)), ['rectificationResult', '站点整改结果'], ['keyword', '关键词搜索']]
 const copySelection = value => Array.isArray(value) ? [...value] : value ? [value] : []
 export const mobileReviewFilters = filters => ({
   ...emptyReviewFilters(), station: copySelection(filters.station), inspectionTableName: copySelection(filters.inspectionTableName), rectificationResult: filters.rectificationResult || '', keyword: String(filters.keyword || '').trim(),

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   reviewOptionsFor,
   reviewOptionLabel,
+  rectificationResultLabel,
   reviewRequiresPhoto,
   reviewAllowsPhoto,
   isReviewReturned,
@@ -117,4 +118,12 @@ test('ordinary rejection allows an optional photo without changing unable-result
   for (const result of ['', '通过站级无法整改', '驳回站级无法整改', 'invalid']) {
     assert.equal(reviewAllowsPhoto(result), false)
   }
+})
+
+test('unable applications can close without a photo; historical spellings display correctly', () => {
+  for (const result of ['站经无法整改','站级无法整改','站经理无法整改','站级无法完成整改']) {
+    assert.equal(rectificationResultLabel(result), '站级无法整改')
+    for (const mode of ['offline','online',undefined]) assert.equal(reviewRequiresPhoto('整改通过',mode,result),false)
+  }
+  assert.equal(reviewRequiresPhoto('整改通过','offline','已整改'),true)
 })

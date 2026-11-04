@@ -1,5 +1,5 @@
 <template>
-  <Teleport to="body">
+  <Teleport :to="teleportTarget">
     <div class="photo-editor-overlay" @keydown.esc.stop.prevent="close">
       <section
         class="photo-editor-dialog"
@@ -128,6 +128,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+const teleportTarget = ref('body')
+const syncTeleportTarget = () => { teleportTarget.value = document.fullscreenElement || 'body' }
+onMounted(() => {
+  syncTeleportTarget()
+  document.addEventListener('fullscreenchange', syncTeleportTarget)
+})
+onBeforeUnmount(() => document.removeEventListener('fullscreenchange', syncTeleportTarget))
 import {
   clampCompositionItemOffset,
   createAutoIssuePhotoComposition,

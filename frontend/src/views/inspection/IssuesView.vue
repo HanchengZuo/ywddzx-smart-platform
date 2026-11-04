@@ -397,7 +397,7 @@
           <input v-model.trim="filters.issueDescription" placeholder="如：接地 锈蚀（空格分隔多个关键词）" />
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('rectificationResult')">
-          <label>站经理整改结果</label>
+          <label>站点整改结果</label>
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
             <option value="已整改">已整改</option>
@@ -570,7 +570,7 @@
                 <th v-if="isIssueColumnVisible('standard_tags')" class="nowrap">规范标签</th>
                 <th v-if="isIssueColumnVisible('description')">问题描述</th>
                 <th v-if="isIssueColumnVisible('issue_photo')" class="nowrap">问题照片</th>
-                <th v-if="isIssueColumnVisible('rectification_result')" class="nowrap">站经理整改结果</th>
+                <th v-if="isIssueColumnVisible('rectification_result')" class="nowrap">站点整改结果</th>
                 <th v-if="isIssueColumnVisible('rectification_note')" class="nowrap">站点反馈整改说明</th>
                 <th v-if="isIssueColumnVisible('rectification_at')" class="nowrap">整改时间</th>
                 <th v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">站点反馈整改照片</th>
@@ -631,7 +631,7 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
-                <td v-if="isIssueColumnVisible('rectification_result')" class="nowrap">{{ item.rectification_result || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('rectification_result')" class="nowrap">{{ rectificationResultLabel(item.rectification_result) }}</td>
                 <td v-if="isIssueColumnVisible('rectification_note')" class="nowrap">{{ item.rectification_note || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('rectification_at')" class="nowrap">{{ item.rectification_at || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">
@@ -1119,7 +1119,7 @@
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
-              <span>站经理整改结果</span>
+              <span>站点整改结果</span>
               <select v-model="editDialog.form.rectification_result">
                 <option value="">暂无/清空</option>
                 <option value="已整改">已整改</option>
@@ -1307,7 +1307,7 @@
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import { isSupervisorRole } from '@/utils/roles'
-import { reviewOptionsFor } from '../../utils/issueWorkflow'
+import { reviewOptionsFor, rectificationResultLabel } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
@@ -1394,7 +1394,7 @@ const filterSummaryFields = computed(() => buildFilterSummary(
     ['standardDetail', '规范详情'],
     ['standardTags', '规范标签'],
     ['issueDescription', '问题描述'],
-    ['rectificationResult', '站经理整改结果'],
+    ['rectificationResult', '站点整改结果'],
     ['reviewResult', '督导组复核结果'],
     ['status', '问题状态'],
     ['excellent', '优秀问题'],
@@ -1518,7 +1518,7 @@ const issueColumnDefinitions = [
   { key: 'standard_tags', label: '规范标签', group: '规范问题', width: 180 },
   { key: 'description', label: '问题描述', group: '规范问题', width: 250 },
   { key: 'issue_photo', label: '问题照片', group: '规范问题', width: 104 },
-  { key: 'rectification_result', label: '站经理整改结果', group: '整改复核', width: 136 },
+  { key: 'rectification_result', label: '站点整改结果', group: '整改复核', width: 136 },
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核', width: 210 },
   { key: 'rectification_at', label: '整改时间', group: '整改复核', width: 148 },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核', width: 120 },

@@ -11,13 +11,16 @@ export function captureIssueListPosition(root, issueId) {
   const containers = []
   const view = root.ownerDocument.defaultView
   for (let parent = current.parentElement; parent; parent = parent.parentElement) {
-    if (/(auto|scroll)/.test(view.getComputedStyle(parent).overflowY)) {
-      containers.push({ element: parent, top: parent.scrollTop, left: parent.scrollLeft })
+    const style = view.getComputedStyle(parent)
+    const vertical = /(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight
+    const horizontal = /(auto|scroll)/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth
+    if (vertical || horizontal) {
+      containers.push({ element: parent, top: parent.scrollTop, left: parent.scrollLeft, vertical })
     }
   }
   const documentScroller = root.ownerDocument.scrollingElement
   if (documentScroller && !containers.some(item => item.element === documentScroller)) {
-    containers.push({ element: documentScroller, top: documentScroller.scrollTop, left: documentScroller.scrollLeft })
+    containers.push({ element: documentScroller, top: documentScroller.scrollTop, left: documentScroller.scrollLeft, vertical: true })
   }
   return {
     containers,
@@ -40,7 +43,7 @@ export function restoreIssueListPosition(root, position) {
   for (const { element, top, left } of [...containers].reverse()) {
     element.scrollTo({ top, left, behavior: 'instant' })
   }
-  const inner = containers[0]
+  const inner = containers.find(item => item.vertical)
   if (anchor && inner) {
     inner.element.scrollTo({
       top: inner.element.scrollTop + anchor.getBoundingClientRect().top - (candidate?.top ?? position.top),
