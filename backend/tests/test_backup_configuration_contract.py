@@ -136,9 +136,10 @@ class BackupConfigurationContractTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text())['destination_path'], str(self.root / 'new'))
         self.cos.assert_not_called(); self.conn.close.assert_called_once()
 
-    def test_config_update_does_not_acquire_existing_job_lock(self):
-        # Characterize the existing concurrency boundary, not an endorsement of it.
+    def test_config_update_does_not_change_schedule_or_directory_during_backup(self):
         lock = threading.Lock()
         with patch.object(api, 'backup_job_lock', lock), lock:
-            self.assertEqual(self.call('PUT').status_code, 200)
+            self.assertEqual(self.call('PUT').status_code, 409)
             self.assertTrue(lock.locked())
+        self.assertFalse(self.path.exists())
+        self.assertFalse(self.destination.exists())

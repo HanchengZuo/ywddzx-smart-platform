@@ -47,6 +47,8 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from backups import archive_validation as backup_archive_validation
 from backups import configuration as backup_configuration
+from backups.cos_worker import run_bounded_upload
+from backups.job_lock import BackupJobLock
 from backups import cos as backup_cos
 from backups import local_files as backup_local_files
 from backups.configuration import (
@@ -1577,7 +1579,7 @@ def format_file_size(size_bytes):
 
 backup_scheduler_started = False
 backup_scheduler_lock = threading.Lock()
-backup_job_lock = threading.Lock()
+backup_job_lock = BackupJobLock(lambda: STORAGE_ROOT)
 issue_export_cleanup_lock = threading.Lock()
 issue_export_cleanup_last_run = 0
 station_score_export_cleanup_lock = threading.Lock()
@@ -1622,8 +1624,19 @@ def write_backup_config(config):
     next_config = backup_configuration.normalize_backup_config(next_config, DEFAULT_BACKUP_DIR)
     next_config["updated_at"] = beijing_now().isoformat()
     os.makedirs(os.path.dirname(BACKUP_CONFIG_PATH), exist_ok=True)
-    with open(BACKUP_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(next_config, f, ensure_ascii=False, indent=2)
+    staging_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+                                         dir=os.path.dirname(BACKUP_CONFIG_PATH)) as f:
+            staging_path = f.name
+            json.dump(next_config, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(staging_path, BACKUP_CONFIG_PATH)
+        staging_path = None
+    finally:
+        if staging_path is not None:
+            os.unlink(staging_path)
     return next_config
 
 
@@ -1688,14 +1701,15 @@ def prune_cos_backup_objects(objects=None):
 
 
 def upload_backup_archive_to_cos(local_path, object_filename):
-    return backup_cos.upload_backup_archive_to_cos(
-        local_path,
-        object_filename,
-        get_environment=get_cos_env_config,
-        get_client=get_cos_client,
-        list_objects=list_cos_backup_objects,
-        prune_objects=prune_cos_backup_objects,
-        clock=beijing_now,
+    config = get_cos_env_config()
+    if not config["configured"]:
+        return {"status": "not_configured", "message": "未配置 COS 环境变量，已跳过云端上传。"}
+    if not config["sdk_available"]:
+        return {"status": "error", "message": "后端缺少腾讯云 COS Python SDK，请重新安装依赖。"}
+    return run_bounded_upload(
+        local_path, object_filename, prefix=COS_BACKUP_PREFIX, backup_prefix=BACKUP_PREFIX,
+        retention=COS_BACKUP_RETENTION_COUNT,
+        pass_fds=getattr(backup_job_lock, "inherited_fds", tuple)(),
     )
 
 
@@ -1946,6 +1960,8 @@ def clear_storage_root_for_restore():
     os.makedirs(storage_root_abs, exist_ok=True)
     for name in os.listdir(storage_root_abs):
         target_path = os.path.abspath(os.path.join(storage_root_abs, name))
+        if target_path == os.path.abspath(BACKUP_CONFIG_PATH):
+            continue
         if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
             raise ValueError("storage 目录中存在非法路径，无法安全清空。")
         if os.path.isdir(target_path) and not os.path.islink(target_path):
@@ -1974,6 +1990,8 @@ def restore_storage_from_backup(zip_path):
             target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
             if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
                 raise ValueError("备份文件中存在非法 storage 路径。")
+            if target_path == os.path.abspath(BACKUP_CONFIG_PATH):
+                continue
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             with zip_file.open(member) as source, open(target_path, "wb") as target:
                 shutil.copyfileobj(source, target)
@@ -2005,14 +2023,12 @@ def restore_full_backup_archive(file_storage):
 
 def mark_auto_backup_result(success, result=None, error=""):
     config = read_backup_config()
-    next_auto_run_at = calculate_next_auto_run_at(config)
     if success:
         cos_result = (result or {}).get("cos") or {}
         cos_status = cos_result.get("status") or "not_configured"
         config.update(
             {
                 "last_auto_export_at": beijing_now().isoformat(),
-                "next_auto_run_at": next_auto_run_at,
                 "last_backup_path": result.get("path") if result else None,
                 "last_backup_size": result.get("size") if result else None,
                 "last_cos_status": cos_status,
@@ -2027,7 +2043,6 @@ def mark_auto_backup_result(success, result=None, error=""):
     else:
         config.update(
             {
-                "next_auto_run_at": next_auto_run_at,
                 "last_status": "error",
                 "last_error": str(error or "自动备份失败。")[:500],
             }
@@ -2036,29 +2051,36 @@ def mark_auto_backup_result(success, result=None, error=""):
 
 
 def maybe_run_scheduled_backup():
-    config = read_backup_config()
-    frequency = config.get("frequency")
-    interval = BACKUP_FREQUENCY_INTERVALS.get(frequency)
-    if not interval:
-        return
-
-    next_run_at = parse_backup_time(config.get("next_auto_run_at"))
-    if not next_run_at:
-        config["next_auto_run_at"] = calculate_next_auto_run_at(config)
-        write_backup_config(config)
-        return
-
-    if beijing_now() < next_run_at.astimezone(BEIJING_TZ):
-        return
-
     if not backup_job_lock.acquire(blocking=False):
         return
     try:
+        config = read_backup_config()
+        if not BACKUP_FREQUENCY_INTERVALS.get(config.get("frequency")):
+            return
+        next_run_at = parse_backup_time(config.get("next_auto_run_at"))
+        now = beijing_now()
+        if config.get("last_status") == "running":
+            # No owner remains: the prior process exited before recording a result.
+            config = write_backup_config(dict(config, last_status="error",
+                last_error="上次自动备份未正常结束，已保留本地文件，不重复执行同一计划。"))
+        if not next_run_at:
+            write_backup_config(dict(config, next_auto_run_at=calculate_next_auto_run_at(config, now)))
+            return
+        if now < next_run_at.astimezone(BEIJING_TZ):
+            return
+        # Persist the claim before doing I/O; failures never re-run this slot.
+        write_backup_config(dict(config, next_auto_run_at=calculate_next_auto_run_at(config, now),
+                                 last_status="running", last_error=""))
+        logger = logging.getLogger("gunicorn.error")
+        logger.info("Scheduled backup claimed: %s", next_run_at.isoformat())
         try:
             result = create_full_backup_archive(config.get("destination_path"), reason="auto")
             mark_auto_backup_result(True, result=result)
+            logger.info("Scheduled backup finished: %s, COS=%s", next_run_at.isoformat(),
+                        (result.get("cos") or {}).get("status"))
         except Exception as exc:
             mark_auto_backup_result(False, error=exc)
+            logging.exception("Scheduled backup failed: %s", next_run_at.isoformat())
     finally:
         backup_job_lock.release()
 
@@ -2070,7 +2092,7 @@ def backup_scheduler_loop():
             maybe_cleanup_expired_issue_exports()
             maybe_cleanup_expired_inspection_report_exports()
         except Exception:
-            pass
+            logging.exception("Backup scheduler iteration failed")
         time.sleep(60)
 
 
@@ -22502,6 +22524,7 @@ def update_management_backup_config():
     user_id = str(data.get("user_id", "")).strip()
     conn = None
     cur = None
+    locked = False
 
     try:
         frequency = str(data.get("frequency") or "off").strip()
@@ -22514,6 +22537,9 @@ def update_management_backup_config():
         cur = conn.cursor()
         require_management_user(cur, user_id, "manage_backups")
 
+        locked = backup_job_lock.acquire(blocking=False)
+        if not locked:
+            return jsonify(success=False, error="备份或恢复正在执行，请稍后再修改设置。"), 409
         os.makedirs(destination_path, exist_ok=True)
         test_path = os.path.join(destination_path, ".ywddzx_backup_write_test")
         with open(test_path, "w", encoding="utf-8") as f:
@@ -22544,6 +22570,8 @@ def update_management_backup_config():
             and os.path.abspath(previous_destination_path) != os.path.abspath(destination_path)
         ):
             cleanup_local_backup_files(previous_destination_path)
+        backup_job_lock.release()
+        locked = False
         cos_status, latest_cos_backups = get_cos_backup_overview(config)
         return jsonify(
             {
@@ -22569,6 +22597,8 @@ def update_management_backup_config():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
+        if locked:
+            backup_job_lock.release()
         close_db_resources(cur, conn)
 
 

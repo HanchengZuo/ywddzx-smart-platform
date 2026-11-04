@@ -19,14 +19,18 @@ class CosBackupUploadTests(unittest.TestCase):
         self.client.head_object.return_value = {'Content-Length': str(self.size)}
 
     def upload(self):
-        return api.upload_backup_archive_to_cos('/tmp/backup.zip', self.key.split('/')[-1])
+        return api.backup_cos.upload_backup_archive_to_cos(
+            '/tmp/backup.zip', self.key.split('/')[-1],
+            get_environment=api.get_cos_env_config, get_client=api.get_cos_client,
+            list_objects=api.list_cos_backup_objects, prune_objects=api.prune_cos_backup_objects,
+            clock=api.beijing_now)
 
     def test_large_archive_uses_bounded_multipart_and_keeps_one(self):
         result = self.upload()
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['retained_count'], 1)
         self.client.upload_file.assert_called_once_with(Bucket='test', Key=self.key,
-            LocalFilePath='/tmp/backup.zip', PartSize=16, MAXThread=2, EnableMD5=True)
+            LocalFilePath='/tmp/backup.zip', PartSize=16, MAXThread=1, EnableMD5=True)
         self.client.put_object_from_local_file.assert_not_called()
         self.client.delete_object.assert_called_once_with(Bucket='test', Key=self.rows[1]['key'])
         calls = [call[0] for call in self.client.mock_calls]

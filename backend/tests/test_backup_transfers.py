@@ -41,7 +41,7 @@ class BackupTransfersTests(unittest.TestCase):
                 self.assertTrue(entered.wait(3))
                 with self.assertRaisesRegex(BackupTaskBusy, '已有备份或恢复任务'):
                     importer.restore(upload)
-                # Scheduled backup uses this same process-local lock, not a service-local one.
+                # Both entry points share the same lock.
                 self.assertFalse(lock.acquire(blocking=False))
                 upload.assert_not_called()
                 importer.read_config.assert_not_called()

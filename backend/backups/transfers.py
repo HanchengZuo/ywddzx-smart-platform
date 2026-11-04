@@ -10,7 +10,7 @@ class TaskLock(Protocol):
 
 
 class BackupTaskBusy(Exception):
-    """The existing process-local backup lock is already held."""
+    """Another backup or restore owns the shared storage lock."""
 
 
 @dataclass(frozen=True)
@@ -53,11 +53,9 @@ class BackupTransfers:
         try:
             # Do not parse the upload until authorization has completed and the lock is held.
             manifest = self.restore_archive(uploaded_file())
+            config = self.read_config()
+            config.update({'last_status': 'success', 'last_error': ''})
+            self.write_config(config)
+            return manifest
         finally:
             self.job_lock.release()
-
-        # Preserve the original boundary: restore releases the lock before updating config.
-        config = self.read_config()
-        config.update({'last_status': 'success', 'last_error': ''})
-        self.write_config(config)
-        return manifest
