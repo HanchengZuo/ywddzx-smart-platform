@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.9', date: '2026-11-04', title: '巡检待办总览',
+    summary: '排班系统新增全员只读待办总览，查看今日派工、历史未完成及逐站明细。',
+    items: ['按姓名、任务类别和进度筛选；区分待完成、已完成与异常免检。', '与个人巡检待办使用相同统计口径，明细按人员、日期和站点展示。', '新增独立查看页面权限，默认仅Root可见，现有排班及个人待办权限不变。'] },
   { version: 'v12.8', date: '2026-11-03', title: '现场明细历史版本纠正与报告兼容',
     summary: '纠正11039–11052历史归属，现场服务报告兼容两版字段，原件库支持按版本维护。',
     items: ['这14条规范对应历史问题更正为v2四字段，保留迁移前数据备查；纯新版记录更正版本，混合记录显示并支持筛选v1、v2，不拆分签名或改变流转。',

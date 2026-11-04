@@ -1807,6 +1807,7 @@ const resolveHomePath = (user) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
+  if (permissions.view_schedule_task_overview) candidates.push('/inspection/task-overview')
   if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
   candidates.push(...certificatePages.filter(page => canAccessCertificates(role, permissions, page.path)).map(page => page.path))
   if (permissions.view_attendance) candidates.push('/assessment/attendance')
