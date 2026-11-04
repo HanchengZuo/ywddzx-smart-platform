@@ -48,7 +48,7 @@
       </header>
       <div class="tasks-body">
         <p class="method">
-          与巡检排班采用同一覆盖口径：同站、同检查表在对应季度、年度或月份内有巡检记录即完成，不要求审核，也不限定录入人。现场和视频未完成项跨日分别进入历史分类；整站只有全部检查表完成才算完成。
+          与巡检排班口径一致：同站同表在覆盖周期内，现场有记录即完成，视频须在「巡检记录」中确认完成。不要求审核或站经理签名，也不限定录入人。未完成项跨日进入历史分类；整站须全部应检表完成。
           视频任务可按站报告异常，填写原因后该站本月三张视频检查表异常免检，不计为已检查。
         </p>
         <section class="agenda-card">
@@ -192,6 +192,7 @@
                 <small v-else-if="task.status === 'exception'"
                   >整站异常免检，无需提交本表巡检记录</small
                 >
+                <small v-else-if="task.unconfirmed_count">已登记视频记录，请在「巡检记录」确认完成</small>
                 <small v-else>尚无对应周期内的巡检记录</small>
                 <small class="coverage-window"
                   >覆盖周期 {{ task.coverage_from }} 至 {{ task.coverage_to }}</small
@@ -202,7 +203,7 @@
                   ? '异常免检'
                   : task.status === 'completed'
                     ? '已完成'
-                    : '未完成'
+                    : task.unconfirmed_count ? '待确认' : '未完成'
               }}</span>
               <button
                 v-if="

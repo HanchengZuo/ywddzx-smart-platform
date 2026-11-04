@@ -1572,6 +1572,9 @@ const completeInspectionRecord = async (record) => {
       }
     }
     await fetchInspections()
+    if (isInspectionCompleted(response.data?.inspection)) {
+      window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    }
     showActionMessage(response.data?.message || '完成确认已记录。', 'success')
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '确认完成失败。', 'error')

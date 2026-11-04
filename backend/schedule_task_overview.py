@@ -10,7 +10,7 @@ from staff_availability import roster_people
 VIEW = "view_schedule_task_overview"
 COUNT_FIELDS = ("total", "pending", "completed", "exempted", "stations")
 DETAIL_FIELDS = ("id", "station_id", "station_name", "mode", "scheduled_date", "table_name",
-                 "column_key", "status", "last_inspection_date", "coverage_from", "coverage_to",
+                 "column_key", "status", "unconfirmed_count", "last_inspection_date", "coverage_from", "coverage_to",
                  "exception_reason", "exception_reporter", "exception_reported_at")
 
 

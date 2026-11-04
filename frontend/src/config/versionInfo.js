@@ -14,6 +14,10 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.9.1', date: '2026-11-04', title: '视频巡检按确认状态统计完成',
+    summary: '视频检查在巡检记录中确认完成后才计入，现场检查维持原口径。',
+    items: ['排班、待办、排班地图、档期实绩及计量年度进度同步采用新口径，适用于空表和问题记录。',
+      '已登记的视频表提示待确认；重置确认后恢复待办。问题审核、站点签名及已有记录的改派保护不变。'] },
   { version: 'v12.9', date: '2026-11-04', title: '巡检待办总览',
     summary: '排班系统新增全员只读待办总览，查看今日派工、历史未完成及逐站明细。',
     items: ['按姓名、任务类别和进度筛选；区分待完成、已完成与异常免检。', '与个人巡检待办使用相同统计口径，明细按人员、日期和站点展示。', '新增独立查看页面权限，默认仅Root可见，现有排班及个人待办权限不变。'] },

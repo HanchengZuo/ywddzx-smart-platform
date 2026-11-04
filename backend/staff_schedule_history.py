@@ -1,5 +1,6 @@
 """Read-only dispatch evidence and station/table coverage, independent of inspectors."""
 from collections import defaultdict
+from schedule_completion import completed_record_sql
 
 
 def summarize_tasks(tasks):
@@ -52,6 +53,8 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False, defer_d
       FROM keys k JOIN inspections ins ON ins.station_id=k.station_id AND ins.inspection_table_id=k.table_id
         AND ins.inspection_date>=k.scheduled_date AND ins.inspection_date<=%s
         AND (%s::date IS NULL OR k.scheduled_date<>%s OR ins.inspection_date<%s)
+      JOIN inspection_tables t ON t.id=ins.inspection_table_id
+      WHERE {completed_record_sql('t.checklist_mode')}
     ), coverage AS (
       SELECT m.station_id,m.table_id,m.scheduled_date,COUNT(*) AS record_count,
         array_agg(DISTINCT m.id) AS record_ids,
@@ -83,12 +86,13 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False, defer_d
 def personal_records(cur, ids, day):
     if not ids:
         return []
-    cur.execute('''SELECT ins.id,ins.inspection_date::text AS day,ins.station_id,
+    cur.execute(f'''SELECT ins.id,ins.inspection_date::text AS day,ins.station_id,
       COALESCE(s.station_name,'站点已删除') AS station_name,t.table_name,t.checklist_mode AS mode,
       COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录检查人') AS inspector_name
       FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
       LEFT JOIN stations s ON s.id=ins.station_id LEFT JOIN users u ON u.id=ins.inspector_id
       WHERE ins.inspection_date=%s AND t.checklist_mode IN ('offline','online')
+        AND {completed_record_sql('t.checklist_mode')}
         AND (ins.inspector_id=ANY(%s) OR EXISTS(SELECT 1 FROM issues issue
           WHERE issue.inspection_id=ins.id AND issue.inspector_id=ANY(%s)))
       ORDER BY ins.inspection_date,ins.id''', (day,ids,ids))

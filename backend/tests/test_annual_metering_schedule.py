@@ -102,6 +102,21 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.assertEqual(odor['status'],'unavailable')
         self.assertTrue(odor['applicable'])
 
+    def test_unconfirmed_annual_video_does_not_credit_monthly_quota(self):
+        self.cur.execute("UPDATE stations SET monitoring_status='未运行' WHERE id=1")
+        self.admin.commit()
+        self.assertEqual(self.plan().status_code, 200)
+        table=next(c['table_id'] for c in self.annual()['columns'] if c['key']=='metering_video')
+        rid=self.record(table=table,completion='待检查人确认')
+        def progress():
+            data=self.client.get('/api/inspection-schedule/metering-plan?year=2026&month=10').json
+            row=next(r for r in data['regions'] if r['region']=='松金')
+            return row['completed'],row['annual_completed'],row['remaining']
+        self.assertEqual(progress(),(0,0,1))
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='已确认完成' WHERE id=%s",(rid,))
+        self.admin.commit()
+        self.assertEqual(progress(),(1,1,0))
+
     def test_quarter_only_links_monthly_quota_members_not_every_station(self):
         self.assertEqual(self.save(station_id=1).status_code,200)
         self.assertEqual(self.annual()['rows'][0]['cells']['metering_site']['status'],'unassigned')

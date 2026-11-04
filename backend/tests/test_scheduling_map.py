@@ -97,7 +97,7 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
           CREATE TABLE stations(id int,station_name text,region text,address text,longitude numeric,latitude numeric,status text);
           CREATE TABLE inspection_tables(id int,checklist_mode text);
           CREATE TABLE inspections(id int,station_id int,inspection_table_id int,inspection_date date,
-            sign_status text,completion_status text);
+            sign_status text,inspector_completion_status text);
           INSERT INTO stations VALUES
             (1,'甲站','浦东','甲路',121.5,31.2,'营业'),(2,'乙站','浦东','乙路',121.6,31.3,'营业'),
             (3,'丙站','宝静','丙路',121.4,31.4,'停业'),(4,'无坐标站',NULL,NULL,NULL,NULL,'营业'),
@@ -107,7 +107,7 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
           INSERT INTO inspection_tables VALUES(1,'offline'),(2,'offline'),(3,'online');
           INSERT INTO inspections VALUES
             (1,1,1,'2026-10-01','待签名确认','未确认'),(2,1,2,'2026-10-02','待签名确认','未确认'),
-            (3,2,3,'2026-10-31','待签名确认','未确认'),(4,3,1,'2026-09-30','已签名确认','已确认'),
+            (3,2,3,'2026-10-31','待签名确认','已确认完成'),(4,3,1,'2026-09-30','已签名确认','已确认'),
             (5,3,2,'2027-01-01','已签名确认','已确认');
         ''')
 
@@ -135,6 +135,15 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
         self.assertNotIn(2, [s['station_id'] for s in result['stations']])
         self.assertIn(1, [s['station_id'] for s in result['stations']])
         self.assertEqual(self.result({'mode': 'online', 'year': '2026', 'month': '11'})['summary']['checked'], 0)
+
+    def test_video_pin_only_disappears_after_record_completion(self):
+        query = {'mode': 'online', 'year': '2026', 'month': '10'}
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='待检查人确认' WHERE id=3")
+        self.assertEqual(self.result(query)['summary']['checked'], 0)
+        self.assertIn(2, {s['station_id'] for s in self.result(query)['stations']})
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='已确认完成' WHERE id=3")
+        self.assertEqual(self.result(query)['summary']['checked'], 1)
+        self.assertNotIn(2, {s['station_id'] for s in self.result(query)['stations']})
 
     def test_enrollment_switches_filter_denominator_regions_and_pins_independently(self):
         self.cur.execute('UPDATE stations SET include_offline_plan=false WHERE id IN (1,3)')

@@ -89,7 +89,7 @@
             </summary>
             <p class="basis-explanation">{{ basis.metering.detail }}</p>
             <p v-if="targetRegions.length">
-              圆环为年度站点覆盖：年度表任一适用检查项为绿色即计已查，每站只计一次。月度目标与本月已查单独列出；未审核记录同样计数，计划预留不算已查。
+              圆环为年度站点覆盖：年度表任一适用检查项为绿色即计已查，每站只计一次。计量现场有记录即可，计量视频须确认完成。月度目标与本月已查单独列出，计划预留不算已查。
             </p>
             <div class="quota-progress-grid">
               <article v-for="r in targetRegions" :key="r.region">

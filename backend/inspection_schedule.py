@@ -20,6 +20,7 @@ from schedule_quotas import read_quotas
 from annual_metering_plan import plan_state, register_metering_plan
 from schedule_row_state import linked_started_stations
 from schedule_video_exceptions import video_exceptions
+from schedule_completion import completed_record_sql
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
@@ -76,20 +77,24 @@ def column_available(column, station, mode):
 def record_cells(cur, station_ids, table_ids, start, end):
     if not station_ids or not table_ids:
         return {}
-    cur.execute('''WITH matched AS MATERIALIZED (
-        SELECT id,station_id,inspection_table_id,inspector_id,inspection_date FROM inspections
-        WHERE station_id=ANY(%s) AND inspection_table_id=ANY(%s)
-          AND inspection_date >= %s AND inspection_date < %s
+    cur.execute(f'''WITH matched AS MATERIALIZED (
+        SELECT ins.id,ins.station_id,ins.inspection_table_id,ins.inspector_id,ins.inspection_date,
+          ({completed_record_sql('t.checklist_mode')}) IS TRUE AS completed
+        FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
+        WHERE ins.station_id=ANY(%s) AND ins.inspection_table_id=ANY(%s)
+          AND ins.inspection_date >= %s AND ins.inspection_date < %s
       ), participants AS (
         SELECT id AS inspection_id,inspector_id FROM matched WHERE inspector_id IS NOT NULL
         UNION
         SELECT i.inspection_id,i.inspector_id FROM issues i JOIN matched m ON m.id=i.inspection_id
         WHERE i.inspector_id IS NOT NULL
-      ) SELECT m.station_id,m.inspection_table_id,COUNT(DISTINCT m.id) AS record_count,
-        MAX(m.inspection_date)::text AS last_inspection_date,
+      ) SELECT m.station_id,m.inspection_table_id,
+        COUNT(DISTINCT m.id) FILTER(WHERE m.completed) AS record_count,
+        COUNT(DISTINCT m.id) FILTER(WHERE NOT m.completed) AS unconfirmed_count,
+        (MAX(m.inspection_date) FILTER(WHERE m.completed))::text AS last_inspection_date,
         COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id',u.id,'username',u.username,
           'display_name',COALESCE(NULLIF(TRIM(u.real_name),''),u.username),'role',u.role))
-          FILTER(WHERE u.id IS NOT NULL),'[]') AS inspectors
+          FILTER(WHERE m.completed AND u.id IS NOT NULL),'[]') AS inspectors
       FROM matched m LEFT JOIN participants p ON p.inspection_id=m.id LEFT JOIN users u ON u.id=p.inspector_id
       GROUP BY m.station_id,m.inspection_table_id''', (station_ids, table_ids, start, end))
     return {(row['station_id'], row['inspection_table_id']): dict(row) for row in cur.fetchall()}
@@ -99,7 +104,7 @@ def read_board(cur, chosen, start, end):
     columns = table_columns(cur, chosen['mode'])
     stations = eligible_stations(cur, chosen)
     station_ids = [row['id'] for row in stations]
-    complete = record_cells(cur, station_ids, [col['table_id'] for col in columns if col['table_id']], start, end)
+    records = record_cells(cur, station_ids, [col['table_id'] for col in columns if col['table_id']], start, end)
     cur.execute('''SELECT c.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
       to_char(c.updated_at,'YYYY-MM-DD HH24:MI:SS') AS saved_at
       FROM inspection_schedule_cells c LEFT JOIN users u ON u.id=c.updated_by
@@ -119,10 +124,11 @@ def read_board(cur, chosen, start, end):
         cells = {}
         for column in columns:
             existing = saved.get((station['id'], column['key'])) or {}
-            record = complete.get((station['id'], column['table_id'])) or {}
+            available = column_available(column, station, chosen['mode'])
+            record = records.get((station['id'], column['table_id']), {}) if available else {}
             assignees = [people.get(uid, dict(id=uid, username='', role='', display_name='账号已删除'))
                          for uid in existing.get('inspector_ids', [])]
-            status = 'exception' if station['id'] in exceptions else 'unavailable' if not column_available(column, station, chosen['mode']) else 'completed' if record else 'assigned' if assignees else 'unassigned'
+            status = 'exception' if station['id'] in exceptions else 'unavailable' if not available else 'completed' if record.get('record_count') else 'assigned' if assignees else 'unassigned'
             if status in summary:
                 summary[status] += 1
             cells[column['key']] = dict(status=status, assignees=assignees,
@@ -132,11 +138,13 @@ def read_board(cur, chosen, start, end):
                 unavailable_reason='仅监控未运行站点参与计量视频年度检查' if chosen['mode']=='annual' and column['key']=='metering_video' and station['monitoring_status']!='未运行' else '',
                 completed_inspectors=sorted(record.get('inspectors', []), key=lambda user: (user['display_name'], user['id'])),
                 record_count=record.get('record_count', 0), last_inspection_date=record.get('last_inspection_date'),
+                unconfirmed_count=record.get('unconfirmed_count', 0),
                 revision=existing.get('revision', 0), updated_by_name=existing.get('updated_by_name', ''),
                 updated_at=existing.get('saved_at', ''),
                 scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None,
                 overdue=bool(status=='assigned' and existing.get('scheduled_date') and existing['scheduled_date']<today()))
-        locked=station['id'] in exceptions or station['id'] in linked_locks or any(c['status']=='completed' for c in cells.values())
+        locked=station['id'] in exceptions or station['id'] in linked_locks or any(
+            c['record_count'] or c['unconfirmed_count'] for c in cells.values())
         for cell in cells.values():
             cell['row_locked']=locked
         rows.append(dict(station_id=station['id'], station_name=station['station_name'],
@@ -197,7 +205,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     required_ids=[c['table_id'] for c in columns if column_available(c,stations[0],chosen['mode'])]
     if not (refresh_team or withdraw_personnel) and (record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id])):
-        raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入调度待选区。')
+        raise ScheduleConflict('该站已有巡检记录或关联任务已开始，整行已锁定，不能调整或移入调度待选区。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date,plan_team FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
     existing = cur.fetchone() or dict(inspector_ids=[], revision=0, scheduled_date=None, plan_team=None)

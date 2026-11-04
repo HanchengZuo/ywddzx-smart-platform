@@ -25,13 +25,13 @@
           <label v-if="draft.mode === 'offline'">季度<select v-model.number="draft.quarter" aria-label="季度"><option v-for="q in 4" :key="q" :value="q">第 {{ q }} 季度</option></select></label>
           <label v-else>月份<select v-model.number="draft.month" aria-label="月份"><option v-for="m in 12" :key="m" :value="m">{{ m }} 月</option></select></label>
         </div>
-        <div class="period-note"><strong>{{ requestedLabel }}</strong><p><span class="automatic-tag">统计口径</span>任意一张对应类型检查表有巡检记录，即计为已检查，无需等待审核。</p></div>
+        <div class="period-note"><strong>{{ requestedLabel }}</strong><p><span class="automatic-tag">统计口径</span>现场任一表有记录即销项，视频须有任一表经检查人确认完成。</p></div>
       </div>
 
       <div class="stats-heading"><strong>本周期覆盖概览</strong><span v-if="result">{{ result.period.label }} · {{ result.period.mode === 'offline' ? '现场' : '视频' }} · {{ region || '全部可见片区' }}<b v-if="loading && pendingChange">暂为上一周期数据</b></span><span v-else>等待周期数据</span></div>
       <section class="coverage-stats" aria-label="巡检覆盖统计" :aria-busy="loading">
         <article><span>纳入覆盖站点</span><strong>{{ result ? summary.total : '—' }}<small>座</small></strong><p>已启用对应类型的巡检计划</p></article>
-        <article class="checked"><span>已检查站点</span><strong>{{ result ? summary.checked : '—' }}<small>座</small></strong><p>已有记录，已从地图销项</p></article>
+        <article class="checked"><span>已检查站点</span><strong>{{ result ? summary.checked : '—' }}<small>座</small></strong><p>已满足覆盖条件，从地图销项</p></article>
         <article class="remaining"><span>待安排检查</span><strong>{{ result ? summary.remaining : '—' }}<small>座</small></strong><p>仍需安排本周期检查</p></article>
         <article class="progress-card"><div><span>本周期覆盖率</span><strong>{{ result ? rate : '—' }}<small>%</small></strong><p>{{ result ? summary.checked + ' / ' + summary.total + ' 座' : '正在核对巡检记录' }}</p></div><i class="coverage-ring" :style="{ '--coverage':rate + '%' }" aria-hidden="true"></i></article>
       </section>
@@ -83,7 +83,7 @@
       <summary><span>统计口径与数据说明</span><small>巡检记录为准 · 不受审核状态影响</small><b class="methodology-toggle" aria-hidden="true"></b></summary>
       <p>数据以巡检记录的“巡检日期”为准，而非问题登记或审核日期。现场检查表按自然季度覆盖，视频检查表按自然月覆盖；类型取自检查表的现场/视频属性。</p>
       <p>仅统计站点基础档案中已启用对应巡检计划的站点。关闭现场或视频计划纳入后，本站不再进入对应类型的覆盖总数、待检查清单和地图。</p>
-      <p>同一站点在所选周期内，只要存在任意一张对应类型检查表的巡检记录即视为已检查，不要求完成所有检查表。不受问题有无、审核结果、检查完成确认或站经理签名状态影响，零问题记录同样计数。</p>
+      <p>所选周期内，现场任一检查表有巡检记录即计覆盖；视频任一检查表须在「巡检记录」中由检查人确认完成才计覆盖。不要求完成全部检查表，不要求问题审核或站经理签名，空表按相同口径处理。</p>
       <p>沿用当前账号巡检记录的站点、片区及检查表数据范围，但不隐藏未审核记录。在已启用对应巡检计划的可见站点中，包含停业站点；缺少坐标不会被遗漏。覆盖率按站点去重，不能作为检查表逐表完成率、整改完成率或考核结论。</p>
       <p>更改检查类型、年份或季度／月份后自动更新；快速切换会合并请求，已查看周期在当前页面内短时缓存30秒。页面可见且联网时每分钟自动核对，后台或断网时暂停；失败后会延长重试间隔，恢复连接或返回页面时自动检查。数据以标注的核对时间为准。</p>
       <p>片区和关键词在本页即时筛选，不增加数据库查询；关键词不改变上方片区覆盖统计。更新内容不变时保持地图位置；本页面不绘制区域圈，只提供排班参考，不会自动派工、删除记录或修改巡检计划。</p>

@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from flask import g, jsonify, request
 from station_plan_eligibility import plan_field
+from schedule_completion import completed_record_sql
 
 
 PERMISSION = 'view_scheduling_map'
@@ -46,17 +47,18 @@ def coverage(cur, chosen, start, end, station_scope, table_scope):
     station_where, station_params = station_scope
     station_where = [*station_where, f's.{plan_field(chosen["mode"])} = TRUE']
     table_where, table_params = table_scope
-    cur.execute('''WITH eligible_tables AS MATERIALIZED (
-        SELECT t.id FROM inspection_tables t WHERE t.checklist_mode=%s AND ''' + ' AND '.join(table_where or ['TRUE']) + '''
+    cur.execute(f'''WITH eligible_tables AS MATERIALIZED (
+        SELECT t.id,t.checklist_mode FROM inspection_tables t WHERE t.checklist_mode=%s AND {' AND '.join(table_where or ['TRUE'])}
       ), station_scope AS MATERIALIZED (
         SELECT s.id AS station_id,s.station_name,COALESCE(NULLIF(TRIM(s.region),''),'未填写片区') AS region,
           s.address,s.longitude,s.latitude,s.status
-        FROM stations s WHERE ''' + ' AND '.join(station_where or ['TRUE']) + '''
+        FROM stations s WHERE {' AND '.join(station_where)}
       ), covered AS MATERIALIZED (
         SELECT DISTINCT ins.station_id FROM inspections ins
         JOIN eligible_tables t ON t.id=ins.inspection_table_id
         JOIN station_scope s ON s.station_id=ins.station_id
         WHERE ins.inspection_date >= %s AND ins.inspection_date < %s
+          AND {completed_record_sql('t.checklist_mode')}
       ), evaluated AS MATERIALIZED (
         SELECT s.*,c.station_id IS NOT NULL AS checked,
           COALESCE(s.longitude BETWEEN -180 AND 180 AND s.latitude BETWEEN -90 AND 90

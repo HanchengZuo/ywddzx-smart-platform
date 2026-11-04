@@ -19,10 +19,12 @@ from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, regional_coverage, regional_targets
 from schedule_driving_routes import DrivingPlanNeeded, driving_request, resolve_driving_plan
 from driving_errors import DrivingUnavailable
+from schedule_completion import completed_record_sql, task_checklist_mode_sql
+from schedule_task_progress import coverage_end_sql
 
 
 def workload(cur, ids, start, end, *, include_plans=True):
-    cur.execute('''WITH participants AS (
+    cur.execute(f'''WITH participants AS (
       SELECT id AS inspection_id,inspector_id FROM inspections WHERE inspection_date >= %s AND inspection_date < %s
       UNION SELECT i.inspection_id,i.inspector_id FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
         WHERE ins.inspection_date >= %s AND ins.inspection_date < %s
@@ -31,14 +33,21 @@ def workload(cur, ids, start, end, *, include_plans=True):
       FROM participants p JOIN inspections ins ON ins.id=p.inspection_id
       JOIN inspection_tables t ON t.id=ins.inspection_table_id
       WHERE p.inspector_id=ANY(%s) AND t.checklist_mode IN ('offline','online') AND ins.inspection_date<=%s
+        AND {completed_record_sql('t.checklist_mode')}
       UNION
       SELECT task.user_id,task.mode,task.scheduled_date,task.station_id FROM inspection_schedule_tasks task
-      WHERE %s AND task.user_id=ANY(%s) AND task.status='pending' AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
+      WHERE %s AND task.user_id=ANY(%s) AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
+        AND (task.status='pending' OR (task.status='completed' AND EXISTS(
+          SELECT 1 FROM inspection_schedule_cells c WHERE c.station_id=task.station_id AND c.column_key=task.column_key
+            AND c.year=task.year AND c.period_number=task.period_number AND c.scheduled_date=task.scheduled_date
+            AND c.mode=CASE WHEN task.column_key IN ('metering_site','metering_video') THEN 'annual' ELSE task.mode END
+            AND c.inspector_ids=task.team_ids)))
         AND task.scheduled_date >= %s AND task.scheduled_date < %s
         AND (task.mode='online' OR task.scheduled_date>=%s)
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.station_id=task.station_id
         AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
+        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')}
+        AND ins.inspection_date<=%s AND {completed_record_sql(task_checklist_mode_sql())})
     ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), include_plans, ids, start, end, today(), today()))
     result = {uid: dict(offline=0, online=0) for uid in ids}
     for r in cur.fetchall(): result[r['uid']][r['mode']] = r['n']

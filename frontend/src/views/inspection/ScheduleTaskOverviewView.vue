@@ -82,7 +82,7 @@
         <p v-else class="notice">{{ people.length ? '没有符合当前筛选的人员。' : '当前没有人员或巡检待办记录。' }}</p>
         <details class="method">
           <summary>统计口径</summary>
-          <p>今日显示全部当日任务，历史只保留仍有未完成项的站点任务组，不计未来排班。完成情况与个人待办一致：覆盖周期内有同站、同检查表的巡检记录即可完成，不要求审核，也不限定录入人。异常免检不计为已完成。</p>
+          <p>今日显示全部当日任务，历史只保留仍有未完成项的站点任务组，不计未来排班。覆盖周期内，现场同站同表有记录即完成，视频须在「巡检记录」中确认完成。不要求审核、站经理签名或由派工人录入，异常免检不计为完成。</p>
         </details>
       </section>
     </template>
@@ -119,9 +119,10 @@
                     <strong>{{ task.table_name }}</strong>
                     <small v-if="task.status === 'completed'">巡检记录 · {{ task.last_inspection_date }}</small>
                     <small v-else-if="task.status === 'exception'">{{ task.exception_reason || '已登记异常免检' }}<template v-if="task.exception_reporter"> · {{ task.exception_reporter }}</template></small>
+                    <small v-else-if="task.unconfirmed_count">视频记录已登记，待检查人确认</small>
                     <small v-else>覆盖周期 {{ task.coverage_from }} 至 {{ task.coverage_to }}</small>
                   </div>
-                  <span :class="['chip', task.status]">{{ statusLabels[task.status] }}</span>
+                  <span :class="['chip', task.status]">{{ task.status === 'pending' && task.unconfirmed_count ? '待确认' : statusLabels[task.status] }}</span>
                 </li>
               </ul>
             </article>

@@ -417,6 +417,7 @@ const confirmComplete = async (record) => {
     const response = await axios.post(`/api/management/inspection-completion/${record.id}/complete`, {
       user_id: userId()
     })
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     showMessage(response.data?.message || '已确认完成。', 'success')
     await fetchData()
   } catch (error) {
@@ -438,6 +439,7 @@ const reopenRecord = async (record) => {
     const response = await axios.post(`/api/management/inspection-completion/${record.id}/reopen`, {
       user_id: userId()
     })
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     showMessage(response.data?.message || '已恢复为未完成。', 'success')
     await fetchData()
   } catch (error) {

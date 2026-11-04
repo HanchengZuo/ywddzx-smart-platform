@@ -5,7 +5,7 @@ export const schedulingMenuPages = [
     permission: 'view_scheduling_map',
     title: '排班地图',
     icon: '排',
-    description: '现场按季度、视频按月，快速查找没有巡检记录的站点。',
+    description: '现场按季度、视频按月，快速查找尚未达到覆盖条件的站点。',
   },
   {
     key: 'driving-data',
