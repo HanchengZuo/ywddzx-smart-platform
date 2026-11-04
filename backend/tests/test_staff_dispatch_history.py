@@ -78,7 +78,10 @@ class HistoryDatabaseTests(unittest.TestCase):
         self.clock('2026-10-21')
         self.record(table=8,day='2026-10-19',inspector=3) # before dispatch, not creditable
         self.record(table=9,day='2026-10-22',inspector=3) # future evidence, not creditable
-        record=self.record(table=7,day='2026-10-21',inspector=3)
+        record=self.record(table=7,day='2026-10-21',inspector=3,completion='待检查人确认')
+        self.assertEqual(self.detail()['cell']['dispatch']['completed'],0)
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='已确认完成' WHERE id=%s",(record,))
+        self.admin.commit()
         detail=self.detail()
         self.assertEqual(detail['cell']['dispatch']['completed'],1)
         original=[(t['id'],t['assigned_at'],t['team_ids']) for t in detail['cell']['tasks']]

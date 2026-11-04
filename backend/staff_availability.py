@@ -12,6 +12,7 @@ from schedule_shelf_store import seed_daily_shelf
 from staff_schedule_history import dispatch_history, personal_records, cell_read_only_reason
 from staff_actuals import actuals_window, assert_actuals_window, merge_actual_modes
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
+from schedule_completion import completed_record_sql
 
 STAFF = ([(name, '管理人员') for name in '步雪琼 孔德辰 赵之龙 吕泽昆 韩叙 杨昊淞 芦斌'.split()]
          + [(name, '大学生') for name in '陈中磊 程镇林 葛心玉 侯明敖 姜傲云 吕雪儿 彭思宇 束紫荆 王涛 王昕怡 王子玥 徐晃 徐佳仪 袁姝慧 赵萌 左翰承 魏九发 宋辞'.split()])
@@ -69,9 +70,10 @@ def roster_people(cur):
     return result
 
 
-def daily_modes(cur, ids, start, end, *, include_ids=False):
+def daily_modes(cur, ids, start, end, *, include_ids=False, completed_only=False):
     if not ids or start>=end: return {}
     evidence = ',array_agg(DISTINCT ins.id) AS record_ids' if include_ids else ''
+    completion = 'AND ' + completed_record_sql('t.checklist_mode') if completed_only else ''
     cur.execute(f'''WITH participants AS (
       SELECT id AS inspection_id,inspector_id FROM inspections WHERE inspection_date >= %s AND inspection_date < %s
       UNION SELECT issue.inspection_id,issue.inspector_id FROM issues issue JOIN inspections ins ON ins.id=issue.inspection_id
@@ -80,6 +82,7 @@ def daily_modes(cur, ids, start, end, *, include_ids=False):
       FROM participants p JOIN inspections ins ON ins.id=p.inspection_id
       JOIN inspection_tables t ON t.id=ins.inspection_table_id
       WHERE p.inspector_id=ANY(%s) AND t.checklist_mode IN ('offline','online')
+      {completion}
       GROUP BY p.inspector_id,ins.inspection_date,t.checklist_mode''', (start, end, start, end, ids))
     result = defaultdict(list)
     for row in cur.fetchall():
@@ -97,6 +100,7 @@ def available_people(cur, day, *, window=None):
     planned = planned_work(cur, day, day + timedelta(days=1))
     teams = team_members(team_days(cur, day, day + timedelta(days=1)))
     window = window or actuals_window(today())
+    # Availability conflicts use activity, not completion: starting a video inspection still counts as work underway.
     actual = daily_modes(cur, [p['id'] for p in people if p['id']], day, min(day+timedelta(days=1),window.as_of+timedelta(days=1)))
     for p in people:
         value = values.get(p['display_name'], {})
@@ -126,7 +130,7 @@ def today_summary(cur, day, *, window=None, actual=None, history=None):
     people = available_people(cur,day,window=window)
     ids = [uid for p in people for uid in p['history_ids']]
     if actual is None:
-        actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True)
+        actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True,completed_only=True)
     if history is None:
         history = dispatch_history(cur,ids,day,day+timedelta(days=1),window.today,
                                    defer_day=window.today if window.as_of<window.today else None)
@@ -265,7 +269,7 @@ def single_staff_cell(cur, person, day, saved=None, *, details=False, window=Non
     work = next(iter(history.values()),{})
     teams = team_members(team_days(cur,day,day+timedelta(days=1)))
     assigned = next((teams[(uid,day.isoformat())] for uid in ids if (uid,day.isoformat()) in teams),None)
-    actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True)
+    actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True,completed_only=True)
     locked = None
     if day >= window.today:
         locks = execution_locks(cur, day)
@@ -292,7 +296,7 @@ def staff_board(cur, week):
                                defer_day=window.today if window.as_of<window.today else None)
     teams = team_days(cur, start, end)
     members = team_members(teams)
-    actual = daily_modes(cur,history_ids,start,min(end,window.as_of+timedelta(days=1)),include_ids=True)
+    actual = daily_modes(cur,history_ids,start,min(end,window.as_of+timedelta(days=1)),include_ids=True,completed_only=True)
     locks = {d['day']: execution_locks(cur, day_value(d['day'])) for d in days if day_value(d['day']) >= window.today}
     for p in people:
         p['cells'] = {}

@@ -6,6 +6,7 @@ from datetime import date
 from flask import g, jsonify, request
 from inspection_schedule_catalog import normalized_region, roster_position, OFFLINE_GROUPS
 from schedule_common import ScheduleConflict, lock_schedule, today
+from schedule_completion import completed_record_sql
 
 
 def plan_state(cur, year, month, *, ignore_plan_day=None, ignore_plan_days=()):
@@ -18,13 +19,14 @@ def plan_state(cur, year, month, *, ignore_plan_day=None, ignore_plan_days=()):
     stations = [s for s in cur.fetchall() if roster_position(s,'annual')]
     regions = Counter(normalized_region(s['region']) for s in stations)
     start, end = date(year,month,1), date(year+1,1,1) if month==12 else date(year,month+1,1)
-    cur.execute('''SELECT ins.station_id,BOOL_OR(ins.inspection_date>=%s AND ins.inspection_date<%s) AS in_month
+    cur.execute(f'''SELECT ins.station_id,BOOL_OR(ins.inspection_date>=%s AND ins.inspection_date<%s) AS in_month
       FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
       JOIN stations s ON s.id=ins.station_id
       WHERE t.is_active=TRUE AND (SELECT COUNT(*) FROM inspection_tables definition
         WHERE definition.table_name=t.table_name AND definition.checklist_mode=t.checklist_mode AND definition.is_active=TRUE)=1 AND (
         (t.table_name='计量稽查检查表（现场）' AND t.checklist_mode='offline') OR
         (t.table_name='计量稽查检查表（视频）' AND t.checklist_mode='online' AND s.monitoring_status='未运行'))
+      AND {completed_record_sql('t.checklist_mode')}
       AND ins.inspection_date>=%s AND ins.inspection_date<%s GROUP BY ins.station_id''',
       (start,end,date(year,1,1),date(year+1,1,1)))
     records=cur.fetchall()

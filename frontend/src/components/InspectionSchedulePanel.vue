@@ -215,7 +215,7 @@
           }}
           {{
             board?.period.label
-          }}，绿色为有巡检记录的已检查项。
+          }}，绿色为已检查项，视频检查须由检查人确认完成。
         </caption>
         <colgroup>
           <col class="index-col" />
@@ -332,9 +332,11 @@
                     ? '未记录检查人'
                     : row.cells[column.key].status === 'unavailable'
                       ? row.cells[column.key].unavailable_reason || '不可安排'
-                      : canEdit
-                        ? '＋ 选择检查人'
-                        : '尚未排班')
+                      : row.cells[column.key].unconfirmed_count
+                        ? '已登记视频巡检'
+                        : canEdit && !scheduleRowLocked(row)
+                          ? '＋ 选择检查人'
+                          : '尚未排班')
                 }}</span>
                 <small v-if="row.cells[column.key].status === 'completed'"
                   >已检查 · {{ row.cells[column.key].last_inspection_date }}</small
@@ -342,6 +344,8 @@
                   v-else-if="row.cells[column.key].status === 'exception'"
                   class="exception-reason"
                   >视频异常免检 · {{ row.cells[column.key].video_exception?.reason }}</small
+                ><small v-else-if="row.cells[column.key].unconfirmed_count"
+                  >已登记 · 待检查人确认</small
                 ><small v-else-if="row.cells[column.key].status === 'assigned'"
                   >{{ row.cells[column.key].scheduled_date || '待补计划日期'
                   }}{{ row.cells[column.key].overdue ? ' · 逾期未检查' : ''
@@ -368,7 +372,7 @@
     <footer class="panel-footer">
       <span
         >{{ board?.period.label || '当前周期' }} ·
-        任一检查项完成即整行锁定，黄色表示原计划逾期未检查。<template v-if="mode === 'online'"
+        任一适用检查项有记录即整行锁定，黄色表示原计划逾期未完成。<template v-if="mode === 'online'"
           >灰色表示整站视频异常免检，不计为已检查。</template
         ></span
       >
@@ -398,7 +402,7 @@
       <details class="shelf-help">
         <summary>调度说明</summary>
         <p>
-          同日同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。剩余为0时不再显示，也不能继续从待选区派站；撤下未开始的计划或提高站数目标后会重新出现。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。同一日期全局共享，过去日期自动清理，未来待选安排保留，历史调度留痕保留。
+          同日同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。剩余为0时不再显示，也不能继续从待选区派站；撤下未开始的计划或提高站数目标后会重新出现。拖到目标站整行直接保存，已有巡检记录的站点整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。同一日期全局共享，过去日期自动清理，未来待选安排保留，历史调度留痕保留。
         </p>
       </details>
       <div
@@ -481,7 +485,10 @@
               </p>
             </section>
             <p v-else-if="currentCell.row_locked" class="completion-note">
-              本站已有检查项完成，整行及同组同日的联动计划已锁定。仅查看原派工和实际记录，不能调整、取消或移入待选区。
+              本站或联动站点任务已有巡检记录，排班已锁定。仅可查看原派工和检查进度。
+            </p>
+            <p v-if="!currentCell.record_count && currentCell.unconfirmed_count && currentCell.status !== 'exception'" class="completion-note">
+              已登记 {{ currentCell.unconfirmed_count }} 条视频巡检记录，须在「巡检记录」中确认完成后才计为已检查。
             </p>
             <div v-if="currentCell.record_count > 0" class="completion-note">
               <strong>本周期已有巡检记录，已锁定</strong>
@@ -994,7 +1001,7 @@ async function dropOn(row, event) {
   const item = dragPayload(event) || shelf.value.find((s) => s.key === pickedShelf.value)
   if (!item) return
   if (scheduleRowLocked(row)) {
-    notice.value = '该站已有检查项完成，整行已锁定，不能改派。'
+    notice.value = '该站或联动任务已有巡检记录，整行已锁定，不能改派。'
     return
   }
   if (item.kind === 'plan') {

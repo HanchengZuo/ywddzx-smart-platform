@@ -1,5 +1,6 @@
 """Shared inbox coverage, matching the matrix's [period_start, period_end) records."""
 import math
+from schedule_completion import completed_record_sql, task_checklist_mode_sql
 
 
 def coverage_end_sql(alias):
@@ -10,6 +11,7 @@ def coverage_end_sql(alias):
 
 def progress_sql(*, all_people=False):
     owner_filter = 'TRUE' if all_people else 'task.user_id=%s'
+    mode = task_checklist_mode_sql()
     return f"""WITH candidates AS MATERIALIZED (
   SELECT task.*, {coverage_end_sql('task')}::date AS coverage_end
   FROM inspection_schedule_tasks task
@@ -28,7 +30,7 @@ def progress_sql(*, all_people=False):
         AND newer.column_key=task.column_key AND newer.id>task.id
         AND newer.status IN ('pending','completed'))
 ), progress AS MATERIALIZED (
-  SELECT task.*, matches.record_count,matches.inspection_id,matches.inspection_date,
+  SELECT task.*, matches.record_count,matches.unconfirmed_count,matches.inspection_id,matches.inspection_date,
     waiver.id AS exception_id,waiver.reason AS exception_reason,waiver.reporter_name AS exception_reporter,
     to_char(waiver.created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD HH24:MI:SS') AS exception_reported_at,
     CASE WHEN waiver.id IS NOT NULL THEN 'exception' WHEN matches.record_count>0 THEN 'completed' ELSE 'pending' END AS effective_status,
@@ -39,15 +41,18 @@ def progress_sql(*, all_people=False):
   LEFT JOIN inspection_schedule_video_exceptions waiver ON task.mode='online'
     AND waiver.year=task.year AND waiver.month=task.period_number AND waiver.station_id=task.station_id
   LEFT JOIN LATERAL (
-    SELECT COUNT(*)::int AS record_count,(array_agg(ins.id ORDER BY ins.inspection_date DESC,ins.id DESC))[1] AS inspection_id,
-      MAX(ins.inspection_date) AS inspection_date
+    SELECT COUNT(*) FILTER(WHERE completed)::int AS record_count,
+      COUNT(*) FILTER(WHERE NOT completed)::int AS unconfirmed_count,
+      (array_agg(id ORDER BY inspection_date DESC,id DESC) FILTER(WHERE completed))[1] AS inspection_id,
+      MAX(inspection_date) FILTER(WHERE completed) AS inspection_date
+    FROM (SELECT ins.id,ins.inspection_date,({completed_record_sql(mode)}) IS TRUE AS completed
     FROM inspections ins WHERE ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
       AND ins.inspection_date>=task.period_start AND ins.inspection_date<task.coverage_end
       AND EXISTS(SELECT 1 FROM inspection_tables definition WHERE definition.id=task.table_id AND definition.is_active=TRUE
         AND definition.table_name=task.table_name
-        AND definition.checklist_mode=CASE WHEN task.column_key='metering_video' THEN 'online' ELSE task.mode END
+        AND definition.checklist_mode={mode}
         AND 1=(SELECT COUNT(*) FROM inspection_tables other WHERE other.table_name=definition.table_name
-          AND other.checklist_mode=definition.checklist_mode AND other.is_active=TRUE))
+          AND other.checklist_mode=definition.checklist_mode AND other.is_active=TRUE))) evidence
   ) matches ON TRUE
 ), visible AS MATERIALIZED (
   SELECT * FROM progress WHERE scheduled_date=%s OR group_pending=1
@@ -88,7 +93,7 @@ def inbox_page(cur,user_id,day,bucket,page,page_size):
       GROUP BY scheduled_date,mode,station_id
       ORDER BY (scheduled_date=%s) DESC,scheduled_date,mode,station_id LIMIT %s OFFSET %s
     ) SELECT p.id,p.mode,p.station_id,p.station_name,p.table_id,p.table_name,p.column_key,p.plan_team,
-      p.scheduled_date::text,p.effective_status AS status,p.record_count,
+      p.scheduled_date::text,p.effective_status AS status,p.record_count,p.unconfirmed_count,
       p.exception_id,p.exception_reason,p.exception_reporter,p.exception_reported_at,
       p.inspection_id AS completion_inspection_id,p.inspection_date::text AS last_inspection_date,
       p.period_start::text AS coverage_from,(p.coverage_end-1)::text AS coverage_to,p.bucket

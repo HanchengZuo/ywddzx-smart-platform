@@ -93,7 +93,8 @@ class ScheduleDatabaseTest(unittest.TestCase):
           UPDATE stations SET include_offline_plan=false WHERE id=5;
           UPDATE stations SET include_online_plan=false WHERE id=3;
           CREATE TABLE inspection_tables(id serial PRIMARY KEY,table_name text,checklist_mode text,is_active boolean DEFAULT true);
-          CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP);
+          CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,
+            inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP,inspector_completion_status text DEFAULT '待检查人确认');
           CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending',created_at timestamp DEFAULT CURRENT_TIMESTAMP);
         ''')
         seen=set()
@@ -159,8 +160,9 @@ class ScheduleDatabaseTest(unittest.TestCase):
             data['cells'] = [dict(station_id=data['station_id'],column_key=key,revision=data['revision']) for key,_,_ in COLUMNS['offline']]
         return self.client.put('/api/inspection-schedule', json=data)
 
-    def record(self, station=1, table=1, inspector=3, day='2026-10-01'):
-        self.cur.execute('INSERT INTO inspections(station_id,inspection_table_id,inspector_id,inspection_date) VALUES(%s,%s,%s,%s) RETURNING id', (station, table, inspector, day))
+    def record(self, station=1, table=1, inspector=3, day='2026-10-01', *, completion='已确认完成'):
+        self.cur.execute('''INSERT INTO inspections(station_id,inspection_table_id,inspector_id,inspection_date,inspector_completion_status)
+          VALUES(%s,%s,%s,%s,%s) RETURNING id''', (station, table, inspector, day, completion))
         row = self.cur.fetchone()['id']; self.admin.commit(); return row
 
     def test_view_edit_denials_and_server_identity(self):

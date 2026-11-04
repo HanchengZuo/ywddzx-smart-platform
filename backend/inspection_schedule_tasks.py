@@ -5,6 +5,7 @@ from flask import g, jsonify, request
 from schedule_common import today
 from staff_availability import STAFF, ensure_today_availability
 from schedule_task_progress import PROGRESS_SQL, params, coverage_end_sql, inbox_summary, inbox_page, BUCKETS
+from schedule_completion import completed_record_sql, task_checklist_mode_sql
 
 
 def sync_tasks(cur, user_id):
@@ -68,7 +69,8 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, e
       AND (%s::date IS NULL OR scheduled_date=%s)
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.id=task.completion_inspection_id
         AND ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')})''', (*key,reconcile_day,reconcile_day))
+        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')}
+        AND {completed_record_sql(task_checklist_mode_sql())})''', (*key,reconcile_day,reconcile_day))
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s
       AND (%s::date IS NULL OR scheduled_date=%s)
