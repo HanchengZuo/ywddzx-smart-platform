@@ -129,11 +129,11 @@ class BackupTransferContractTests(unittest.TestCase):
         self.assertEqual(response.headers['X-COS-Backup-Status'], 'not_configured')
         self.assertEqual(response.headers['X-COS-Backup-Key'], '')
 
-    def test_import_releases_lock_before_config_update_and_preserves_response(self):
+    def test_import_holds_lock_through_config_update_and_preserves_response(self):
         response = self.call('import')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, dict(success=True, message='完整备份已导入，数据库与上传文件目录已恢复。', manifest=self.manifest))
-        self.assertEqual(self.events, ['cursor.close', 'connection.close', ('restore', True), ('read', False), ('write', False)])
+        self.assertEqual(self.events, ['cursor.close', 'connection.close', ('restore', True), ('read', True), ('write', True)])
         self.assertFalse(self.lock.locked())
         self.assertEqual(self.config['last_error'], '')
 
@@ -211,7 +211,7 @@ class BackupTransferContractTests(unittest.TestCase):
         response = self.call('import')
         self.assertEqual(response.status_code, 500)
         self.assertIn(('restore', True), self.events)
-        self.assertIn(('read', False), self.events)
+        self.assertIn(('read', True), self.events)
         self.assertFalse(self.lock.locked())
 
 

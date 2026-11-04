@@ -35,6 +35,7 @@ class CosBackupAdapterTests(unittest.TestCase):
         self.client_factory = self.stack.enter_context(patch.object(api, 'CosS3Client', return_value=self.client))
         self.now = datetime(2026, 10, 16, 12, tzinfo=api.BEIJING_TZ)
         self.clock = self.stack.enter_context(patch.object(api, 'beijing_now', return_value=self.now))
+        self.stack.enter_context(patch.object(api, 'run_bounded_upload', side_effect=self.upload_in_test))
         self.new_object = dict(Key=self.key, Size=str(self.size), LastModified='2026-10-16T04:00:00Z', ETag='"new-etag"')
         self.old_object = dict(Key=self.old_key, Size='5', LastModified='2026-10-15T04:00:00Z', ETag='"old-etag"')
         self.client.list_objects.return_value = dict(Contents=[self.old_object, self.new_object], IsTruncated=False)
@@ -42,6 +43,12 @@ class CosBackupAdapterTests(unittest.TestCase):
 
     def upload(self):
         return api.upload_backup_archive_to_cos(str(self.archive), self.filename)
+
+    def upload_in_test(self, path, filename, **kwargs):
+        return api.backup_cos.upload_backup_archive_to_cos(
+            path, filename, get_environment=api.get_cos_env_config,
+            get_client=api.get_cos_client, list_objects=api.list_cos_backup_objects,
+            prune_objects=api.prune_cos_backup_objects, clock=api.beijing_now)
 
     def test_environment_values_are_trimmed_and_read_on_each_call(self):
         config = api.get_cos_env_config()
@@ -183,7 +190,7 @@ class CosBackupAdapterTests(unittest.TestCase):
             retained_count=1, removed_count=1))
         self.assertEqual(self.client.mock_calls, [
             call.upload_file(Bucket='test-bucket', Key=self.key, LocalFilePath=str(self.archive),
-                             PartSize=16, MAXThread=2, EnableMD5=True),
+                             PartSize=16, MAXThread=1, EnableMD5=True),
             call.head_object(Bucket='test-bucket', Key=self.key),
             call.list_objects(Bucket='test-bucket', Prefix='test-backups/', Marker='', MaxKeys=1000),
             call.delete_object(Bucket='test-bucket', Key=self.old_key),

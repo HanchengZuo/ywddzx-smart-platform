@@ -331,6 +331,7 @@ const syncConfig = (nextConfig = {}) => {
 }
 
 const statusText = computed(() => {
+  if (config.last_status === 'running') return '自动备份正在执行'
   if (config.last_status === 'error') return config.last_error || '执行失败'
   if (config.last_status === 'warning') return config.last_error || '本地备份成功，云端上传异常'
   return '正常'

@@ -155,7 +155,7 @@ def upload_backup_archive_to_cos(
             Key=object_key,
             LocalFilePath=local_path,
             PartSize=16,
-            MAXThread=2,
+            MAXThread=1,
             EnableMD5=True,
         )
         metadata = client.head_object(Bucket=cos_config["bucket"], Key=object_key)
