@@ -32,4 +32,12 @@ export const schedulingMenuPages = [
     icon: '班',
     description: '现场按季度、视频按月，在排班表分配检查人并查看逐表检查记录。',
   },
+  {
+    key: 'schedule-task-overview',
+    path: '/inspection/task-overview',
+    permission: 'view_schedule_task_overview',
+    title: '待办总览',
+    icon: '总',
+    description: '只读查看全员巡检待办进度、历史未完成项及逐站任务。',
+  },
 ]

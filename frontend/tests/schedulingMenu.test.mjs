@@ -32,6 +32,7 @@ test('scheduling appears after inspection, with each existing URL listed exactly
   assert.deepEqual(group.pages.map(page => page.path), schedulingMenuPages.map(page => page.path))
   assert.deepEqual(schedulingMenuPages.map(page => [page.title, page.permission]), [
     ['排班地图', 'view_scheduling_map'], ['路网数据', 'view_driving_matrix'], ['人员档期', 'view_staff_availability'], ['巡检排班', 'view_inspection_schedule'],
+    ['待办总览', 'view_schedule_task_overview'],
   ])
   assert.equal(new Set(PAGE_VISIBILITY_PAGES.map(page => page.path)).size, PAGE_VISIBILITY_PAGES.length)
   assert.ok(!operationsMenuPages.some(page => page.key === 'scheduling-map'))
@@ -59,7 +60,12 @@ test('real sidebar template renders only authorized pages and hides empty schedu
   assert.match(root, /排班地图/)
   assert.match(root, /巡检排班/)
   assert.match(root, /人员档期/)
-  assert.equal((root.match(/<button /g) || []).length, 4)
+  assert.equal((root.match(/<button /g) || []).length, 5)
+  assert.ok(root.indexOf('待办总览') > root.indexOf('巡检排班'))
+  assert.doesNotMatch(plan, /待办总览/)
+  const overview = await menu({ permissions: { view_schedule_task_overview: true } })
+  assert.match(overview, /待办总览/)
+  assert.doesNotMatch(overview, /巡检排班/)
 })
 
 test('page visibility still wins and collapsed navigation retains accessible titles', async () => {

@@ -67,6 +67,10 @@ const routes = [
     component: () => import('../views/inspection/InspectionScheduleView.vue')
   },
   {
+    path: '/inspection/task-overview',
+    component: () => import('../views/inspection/ScheduleTaskOverviewView.vue')
+  },
+  {
     path: '/inspection/reports',
     component: () => import('../views/inspection/ReportGeneratorView.vue')
   },
@@ -221,6 +225,7 @@ const canAccessPath = (path, role, permissions) => {
     )
   }
   if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_schedule')
+  if (path === '/inspection/task-overview') return hasPermission(role, permissions, 'view_schedule_task_overview')
   if (path === '/inspection/reports') return Boolean(reportPerspective(role, permissions))
   if (path.startsWith('/certificates/')) return canAccessCertificates(role, permissions, path)
   if (path === '/inspection/my-issues') return isSupervisorRole(role) || role === 'station_manager'
@@ -257,6 +262,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
+  if (permissions.view_schedule_task_overview) candidates.push('/inspection/task-overview')
   if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
   candidates.push(...certificatePages.filter(page => canAccessCertificates(role, permissions, page.path)).map(page => page.path))
   if (permissions.view_attendance) candidates.push('/assessment/attendance')

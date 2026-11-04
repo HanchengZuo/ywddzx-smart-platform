@@ -950,6 +950,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True},
     },
     {
+        "key": "view_schedule_task_overview",
+        "name": "查看页面",
+        "category": "待办总览",
+        "description": "只读查看所有人员的巡检待办进度和逐站任务，不授予编辑排班权限。默认仅Root可访问。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "view_inspection_reports",
         "name": "督导中心视角",
         "category": "AI报告生成",
@@ -33946,6 +33953,8 @@ register_schedule_automation(app, connect=get_db_connection, has_permission=has_
 from driving_matrix_http import register_driving_matrix
 register_driving_matrix(app, connect=get_db_connection, has_permission=has_permission)
 register_schedule_tasks(app, connect=get_db_connection)
+from schedule_task_overview import register_schedule_task_overview
+register_schedule_task_overview(app, connect=get_db_connection, has_permission=has_permission)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)
 

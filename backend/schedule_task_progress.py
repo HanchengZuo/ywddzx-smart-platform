@@ -1,4 +1,4 @@
-"""Self-only inbox coverage, matching the matrix's [period_start, period_end) records."""
+"""Shared inbox coverage, matching the matrix's [period_start, period_end) records."""
 import math
 
 
@@ -8,10 +8,12 @@ def coverage_end_sql(alias):
       WHEN {alias}.mode='offline' THEN INTERVAL '3 months' ELSE INTERVAL '1 month' END)"""
 
 
-PROGRESS_SQL = f"""WITH candidates AS MATERIALIZED (
+def progress_sql(*, all_people=False):
+    owner_filter = 'TRUE' if all_people else 'task.user_id=%s'
+    return f"""WITH candidates AS MATERIALIZED (
   SELECT task.*, {coverage_end_sql('task')}::date AS coverage_end
   FROM inspection_schedule_tasks task
-  WHERE task.user_id=%s AND task.scheduled_date<=%s
+  WHERE {owner_filter} AND task.scheduled_date<=%s
     AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
     AND (task.status IN ('pending','completed') OR (task.status='expired' AND task.mode='offline'
       AND EXISTS(SELECT 1 FROM inspection_schedule_cells c WHERE c.year=task.year
@@ -32,7 +34,7 @@ PROGRESS_SQL = f"""WITH candidates AS MATERIALIZED (
     CASE WHEN waiver.id IS NOT NULL THEN 'exception' WHEN matches.record_count>0 THEN 'completed' ELSE 'pending' END AS effective_status,
     CASE WHEN task.scheduled_date=%s THEN 'today_' ELSE 'history_' END || task.mode AS bucket,
     MAX(CASE WHEN matches.record_count=0 AND waiver.id IS NULL THEN 1 ELSE 0 END)
-      OVER(PARTITION BY task.scheduled_date,task.mode,task.station_id) AS group_pending
+      OVER(PARTITION BY task.user_id,task.scheduled_date,task.mode,task.station_id) AS group_pending
   FROM candidates task
   LEFT JOIN inspection_schedule_video_exceptions waiver ON task.mode='online'
     AND waiver.year=task.year AND waiver.month=task.period_number AND waiver.station_id=task.station_id
@@ -51,7 +53,15 @@ PROGRESS_SQL = f"""WITH candidates AS MATERIALIZED (
   SELECT * FROM progress WHERE scheduled_date=%s OR group_pending=1
 ) """
 
+PROGRESS_SQL = progress_sql()
+ALL_PEOPLE_PROGRESS_SQL = progress_sql(all_people=True)
 BUCKETS=('today_offline','today_online','history_offline','history_online')
+
+SUMMARY_COLUMNS = """COUNT(*)::int AS total,
+  COUNT(*) FILTER(WHERE effective_status='pending')::int AS pending,
+  COUNT(*) FILTER(WHERE effective_status='completed')::int AS completed,
+  COUNT(*) FILTER(WHERE effective_status='exception')::int AS exempted,
+  COUNT(DISTINCT (scheduled_date,station_id))::int AS stations"""
 
 
 def params(user_id,day):
@@ -59,12 +69,8 @@ def params(user_id,day):
 
 
 def inbox_summary(cur,user_id,day):
-    cur.execute(PROGRESS_SQL+'''SELECT bucket,COUNT(*)::int AS total,
-      COUNT(*) FILTER(WHERE effective_status='pending')::int AS pending,
-      COUNT(*) FILTER(WHERE effective_status='completed')::int AS completed,
-      COUNT(*) FILTER(WHERE effective_status='exception')::int AS exempted,
-      COUNT(DISTINCT (scheduled_date,station_id))::int AS stations
-      FROM visible GROUP BY bucket''',params(user_id,day))
+    cur.execute(PROGRESS_SQL+f'SELECT bucket,{SUMMARY_COLUMNS} FROM visible GROUP BY bucket',
+                params(user_id,day))
     buckets={key:dict(total=0,pending=0,completed=0,stations=0) for key in BUCKETS}
     exception_counts={key:0 for key in BUCKETS}
     for row in cur.fetchall():
