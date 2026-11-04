@@ -4,15 +4,16 @@ import { emptyReviewFilters, matchesMyIssue, mobileReviewFilterDefinitions, mobi
 
 const issue = { id: 18, time: '2026-09-05 12:00', month: '2026-09', region: '浦东', station: '杨思', inspector: '测试检查人', station_manager: '测试站长', inspection_table_name: '现场表', standard_id: 1000, standard_detail_text: '安全规定', description: '地面积水', standard_tags: [{ group_name: '区域', tag_name: '加油区' }] }
 test('review filters match every supported field together', () => {
-  assert.ok(matchesMyIssue(issue, { ...emptyReviewFilters(), id: '18', month: '2026-09', dateFrom: '2026-09-01', dateTo: '2026-09-05', region: ['浦东'], station: ['杨思'], inspector: ['测试检查人'], stationManager: '站长', inspectionTableName: ['现场表'], standardId: '1000', standardDetail: '安全', standardTags: ['区域：加油区'], description: '积水' }))
+  assert.ok(matchesMyIssue(issue, { ...emptyReviewFilters(), id: '18', month: '2026-09', dateFrom: '2026-09-01', dateTo: '2026-09-05', region: ['浦东'], station: ['杨思'], inspector: ['测试检查人'], stationManager: '站长', inspectionTableName: ['现场表'], standardId: '1000', standardDetail: '安全', description: '积水' }))
 })
 test('external standard ID is exact, dates and selections exclude mismatches', () => {
-  for (const extra of [{ standardId: '100' }, { dateTo: '2026-09-04' }, { station: ['别站'] }, { inspector: ['别人'] }, { standardTags: ['区域：卸油区'] }]) assert.equal(matchesMyIssue(issue, { ...emptyReviewFilters(), ...extra }), false)
+  for (const extra of [{ standardId: '100' }, { dateTo: '2026-09-04' }, { station: ['别站'] }, { inspector: ['别人'] }]) assert.equal(matchesMyIssue(issue, { ...emptyReviewFilters(), ...extra }), false)
 })
 test('station filters remain compatible and excluded review filters are absent', () => {
   assert.ok(matchesMyIssue(issue, { region: '浦', station: '杨', inspectionTableName: '' }))
   assert.equal(reviewFilterDefinitions.length, 12)
-  for (const key of ['status', 'excellent', 'rectificationResult', 'reviewResult', 'auditState', 'auditStatus']) assert.ok(!reviewFilterDefinitions.some(([field]) => field === key))
+  assert.ok(reviewFilterDefinitions.some(([key]) => key === 'rectificationResult'))
+  for (const key of ['status', 'excellent', 'standardTags', 'reviewResult', 'auditState', 'auditStatus']) assert.ok(!reviewFilterDefinitions.some(([field]) => field === key))
 })
 test('server review defaults include all dates and serialize full filter values', () => {
   const filters = emptyReviewFilters()
@@ -29,8 +30,19 @@ test('server review defaults include all dates and serialize full filter values'
 })
 
 test('mobile review exposes station, table and keyword without restricting desktop definitions', () => {
-  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表'], ['keyword', '关键词搜索']])
+  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表'], ['rectificationResult', '站经理整改结果'], ['keyword', '关键词搜索']])
   assert.equal(reviewFilterDefinitions.length, 12)
+})
+
+test('rectification results serialize on desktop and mobile and removed tags cannot filter', () => {
+  for (const result of ['已整改', '站级无法整改']) {
+    const filters = { ...emptyReviewFilters(), rectificationResult: result, standardTags: ['旧标签'] }
+    assert.equal(reviewRequestParams(filters).rectification_result, result)
+    assert.equal(reviewRequestParams(mobileReviewFilters(filters)).rectification_result, result)
+    assert.equal('standard_tags' in reviewRequestParams(filters), false)
+    assert.equal(matchesMyIssue({ ...issue, rectification_result: result }, filters), true)
+    assert.equal(matchesMyIssue({ ...issue, rectification_result: result === '已整改' ? '站经无法整改' : '已整改' }, filters), false)
+  }
 })
 
 test('mobile requests ignore hidden desktop conditions and preserve independent selections', () => {

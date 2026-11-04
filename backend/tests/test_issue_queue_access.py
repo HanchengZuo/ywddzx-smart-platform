@@ -163,6 +163,16 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=45")
         self.assertEqual(self.cur.fetchone()['n'],0)
 
+    def test_rectification_filters_keep_department_scope_and_ignore_removed_tags(self):
+        self.role('quality_safety')
+        self.cur.execute("UPDATE issues SET rectification_result='站级无法整改' WHERE id=44")
+        self.admin.commit()
+        for result, expected in [('已整改',set()), ('站级无法整改',{42,44})]:
+            body,status=self.call('/api/my-review-issues?rectification_result='+result+'&standard_tags=["无关旧标签"]',api.get_my_issues)
+            self.assertEqual(status,200,body)
+            self.assertEqual({r['id'] for r in body['items']},expected)
+            self.assertEqual(body['total'],len(expected))
+
     def test_read_only_and_denied_switches_apply_to_api_not_just_buttons(self):
         self.overrides['submit_my_issue_reviews']=False
         self.assertEqual(self.call('/api/my-review-issues',api.get_my_issues)[1],200)

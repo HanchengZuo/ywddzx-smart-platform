@@ -26296,9 +26296,15 @@ def build_pending_review_filters(source):
     # Preserve the review queue's scope; clients cannot replace its workflow status.
     allowed = ('issue_id', 'month', 'date_from', 'date_to', 'regions', 'stations',
                'station_manager', 'inspectors', 'inspection_tables', 'standard_id',
-               'standard_detail', 'standard_tags', 'issue_description')
+               'standard_detail', 'rectification_result', 'issue_description')
     filters = normalize_issue_list_filters({key: source.get(key) for key in allowed})
     where, params = [PENDING_REVIEW_WHERE], []
+    result = canonical_issue_result(filters['rectification_result'])
+    if result:
+        values = [result, *(alias for alias, canonical in ISSUE_RESULT_ALIASES.items() if canonical == result)]
+        where.append("i.rectification_result = ANY(%s)")
+        params.append(values)
+    filters['rectification_result'] = ''
     issue_id = filters['issue_id']
     filters['issue_id'] = ''
     if issue_id:
@@ -26334,18 +26340,12 @@ def get_pending_review_filter_options():
             SELECT ARRAY_AGG(DISTINCT s.region) AS regions,
                    ARRAY_AGG(DISTINCT s.station_name) AS stations,
                    ARRAY_AGG(DISTINCT issue_inspector.real_name) AS inspectors,
-                   ARRAY_AGG(DISTINCT t.table_name) AS inspection_tables,
-                   ARRAY_AGG(DISTINCT i.internal_standard_id) AS codes
+                   ARRAY_AGG(DISTINCT t.table_name) AS inspection_tables
             {PENDING_REVIEW_JOINS} WHERE {PENDING_REVIEW_WHERE} AND {scope}
         """, params)
         row = cur.fetchone() or {}
-        tag_map = fetch_internal_standard_tags_by_codes(cur, row.get('codes') or [])
         options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
                    for key in ('regions', 'stations', 'inspectors', 'inspection_tables')}
-        options['standard_tags'] = sorted({
-            f"{tag['group_name']}：{tag['tag_name']}" if tag.get('group_name') else tag['tag_name']
-            for tags in tag_map.values() for tag in tags if tag.get('tag_name')
-        })
         return jsonify(success=True, filter_options=options)
     except Exception:
         logging.exception('Failed to load pending review facets')

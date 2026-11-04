@@ -27,11 +27,19 @@ class PendingReviewPaginationTests(unittest.TestCase):
         })
         self.assertIn('i.id::text = %s', where)
         self.assertIn("COALESCE(i.standard_id::text, '') = %s", where)
-        self.assertIn('EXISTS', where)
+        self.assertNotIn('filter_tag', where)
         self.assertNotIn("' OR TRUE --", where)
         self.assertIn(["甲站", "乙站"], params)
         for value in ('2026-09-05', '2026-09-09', '2026-09-01', '2026-09-30'):
             self.assertIn(value, params)
+
+    def test_rectification_filter_is_parameterized_and_matches_legacy_unable_aliases(self):
+        where, params = api.build_pending_review_filters({'rectification_result': '站级无法整改', 'standard_tags': '["旧标签"]'})
+        self.assertIn('i.rectification_result = ANY(%s)', where)
+        self.assertEqual(set(params[0]), {'站经无法整改','站级无法整改','站级无法完成整改','站经理无法整改'})
+        self.assertNotIn('filter_tag', where)
+        self.assertIn(api.PENDING_REVIEW_WHERE, where)
+        self.assertEqual(api.build_pending_review_filters({'rectification_result':'已整改'})[1], [['已整改']])
 
     def test_page_is_bounded_and_reads_only_current_page_without_sync(self):
         for role in ('root', 'supervisor', 'supervisor_manager'):
