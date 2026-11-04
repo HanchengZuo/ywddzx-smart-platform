@@ -207,8 +207,8 @@
           <span v-if="!sidebarCollapsed">检查表原件库</span>
         </button>
 
-        <button v-if="canViewStationMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/my-issues')"
+        <button v-if="canViewStationMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-rectifications'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/my-rectifications')"
           :title="sidebarCollapsed ? '我的待整改问题' : ''">
           <span class="nav-item-icon feedback-nav-icon">
             待
@@ -241,12 +241,12 @@
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
 
-        <button v-if="canViewSupervisorMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/my-issues')"
+        <button v-if="canViewSupervisorMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-reviews'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/my-reviews')"
           :title="sidebarCollapsed ? '我的待复核问题' : ''">
           <span class="nav-item-icon feedback-nav-icon">
             待
-            <span v-if="myPendingRectificationCount > 0" class="feedback-unread-badge">{{ myPendingRectificationDisplay }}</span>
+            <span v-if="myPendingReviewCount > 0" class="feedback-unread-badge">{{ myPendingReviewCount > 99 ? '99+' : myPendingReviewCount }}</span>
           </span>
           <span v-if="!sidebarCollapsed">我的待复核问题</span>
         </button>
@@ -664,6 +664,7 @@ import { certificatePages, canAccessCertificates } from './config/certificateCat
 import { reportPerspective } from './utils/reportAccess'
 import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
+import { canAccessIssueQueue, issueQueuePaths } from './utils/issueQueueAccess.js'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
 import {
@@ -855,6 +856,7 @@ const feedbackUnreadCount = ref(0)
 const certificateUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
+const myPendingReviewCount = ref(0)
 const scheduleTaskPendingCount = ref(0)
 const scheduleAgenda = ref(null)
 const appealNotificationCount = ref(0)
@@ -989,9 +991,9 @@ const canViewRecords = computed(() => (
 const canViewHighlights = computed(() => (isRoot.value || ['view_all_inspection_issues', 'limit_issue_station_region_scope', 'view_own_inspection_issues', 'submit_inspections'].some(key => localPermissions.value[key])) && isPageVisible('/inspection/highlights'))
 const canViewInspectionReports = computed(() => Boolean(reportPerspective(authState.role, localPermissions.value)) && isPageVisible('/inspection/reports'))
 const visibleCertificatePages = computed(() => certificatePages.filter(page => canAccessCertificates(authState.role, localPermissions.value, page.path) && isPageVisible(page.path)))
-const canViewMyIssues = computed(() => (isSupervisor.value || isStationManager.value) && isPageVisible('/inspection/my-issues'))
-const canViewStationMyIssues = computed(() => isStationManager.value && isPageVisible('/inspection/my-issues'))
-const canViewSupervisorMyIssues = computed(() => isSupervisor.value && isPageVisible('/inspection/my-issues'))
+const canViewStationMyIssues = computed(() => canAccessIssueQueue(authState.role, localPermissions.value, 'rectification') && isPageVisible(issueQueuePaths.rectification))
+const canViewSupervisorMyIssues = computed(() => canAccessIssueQueue(authState.role, localPermissions.value, 'review') && isPageVisible(issueQueuePaths.review))
+const canViewMyIssues = computed(() => canViewStationMyIssues.value || canViewSupervisorMyIssues.value)
 const canViewInspectionSection = computed(() => (
   isPageVisible('/inspection/appeals') ||
   canSubmitInspections.value ||
@@ -1507,6 +1509,7 @@ const resetNotificationCounts = () => {
   feedbackUnreadCount.value = 0
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
+  myPendingReviewCount.value = 0
   scheduleTaskPendingCount.value = 0
   scheduleAgenda.value = null
   appealNotificationCount.value = 0
@@ -1518,6 +1521,7 @@ const applyNotificationSummary = (payload = {}) => {
   feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
+  myPendingReviewCount.value = Number(payload.my_pending_review_count || 0)
   scheduleTaskPendingCount.value = Number(payload.schedule_task_pending_count || 0)
   scheduleAgenda.value = payload.schedule_agenda || null
   appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
@@ -1792,7 +1796,7 @@ const resolveHomePath = (user) => {
   const role = user?.role || ''
   const permissions = user?.permissions || {}
   const candidates = []
-  if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  if (canAccessIssueQueue(role, permissions, 'rectification')) candidates.push(issueQueuePaths.rectification)
   operationsPages.forEach(page => { if (role === 'root' || permissions[page.permission]) candidates.push(page.path) })
   if (role === 'root' || permissions.view_station_map) candidates.push('/inspection/station-map')
   if (role === 'root' || permissions.view_scheduling_map) candidates.push('/inspection/scheduling-map')
@@ -1806,6 +1810,7 @@ const resolveHomePath = (user) => {
   if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) {
     candidates.push('/inspection/records')
   }
+  if (canAccessIssueQueue(role, permissions, 'review')) candidates.push(issueQueuePaths.review)
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
   if (permissions.view_schedule_task_overview) candidates.push('/inspection/task-overview')
   if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')

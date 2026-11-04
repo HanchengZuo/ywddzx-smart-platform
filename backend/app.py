@@ -894,6 +894,34 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "view_my_rectification_issues",
+        "name": "查看页面",
+        "category": "我的待整改问题",
+        "description": "站点账号查看本站已验收、审核通过且待整改的问题；不依赖巡检问题列表权限。",
+        "defaults": {"root": True, "station_manager": True},
+    },
+    {
+        "key": "submit_my_rectification",
+        "name": "提交整改",
+        "category": "我的待整改问题",
+        "description": "站点账号提交本站整改反馈；关闭后仍可在拥有查看权限时查看待整改问题。",
+        "defaults": {"root": True, "station_manager": True},
+    },
+    {
+        "key": "view_my_review_issues",
+        "name": "查看页面",
+        "category": "我的待复核问题",
+        "description": "督导组查看全部待复核问题；五类处室仅查看本部门检查表。部门范围固定，含历史版本，不受问题列表范围设置影响。",
+        "defaults": {"root": True, "supervisor": True, "quality_safety": True},
+    },
+    {
+        "key": "submit_my_issue_reviews",
+        "name": "提交复核",
+        "category": "我的待复核问题",
+        "description": "在本页面允许的范围内提交复核结论、说明和照片；关闭后保留只读查看能力。此开关不授予问题审核权限。",
+        "defaults": {"root": True, "supervisor": True, "quality_safety": True},
+    },
+    {
         "key": "hide_inspector_contact_info",
         "name": "隐藏检查人信息",
         "category": "巡检信息显示",
@@ -1128,6 +1156,8 @@ for permission_item in PERMISSION_CATALOG:
     defaults.setdefault("area_account", bool(defaults.get("quality_safety", False)))
 
 AREA_ACCOUNT_PERMISSION_OVERRIDES = {
+    "view_my_review_issues": False,
+    "submit_my_issue_reviews": False,
     "view_all_inspection_issues": False,
     "view_all_inspection_records": False,
     "limit_issue_inspection_table_scope": False,
@@ -1150,6 +1180,8 @@ PERMISSION_EXCLUSIVE_GROUPS = [
     ("view_own_inspection_records", "limit_record_station_region_scope", "view_all_inspection_records"),
 ]
 PERMISSION_DEPENDENCIES = {
+    "submit_my_rectification": "view_my_rectification_issues",
+    "submit_my_issue_reviews": "view_my_review_issues",
     "adjust_station_scores": "view_station_scores",
     "reset_station_account_password": "manage_stations",
     "generate_inspection_reports": "view_inspection_reports",
@@ -5438,7 +5470,11 @@ def fetch_page_visibility_settings(cur):
         ORDER BY page_key ASC;
         """
     )
-    return {row["page_key"]: bool(row["is_visible"]) for row in cur.fetchall()}
+    settings = {row["page_key"]: bool(row["is_visible"]) for row in cur.fetchall()}
+    if "/inspection/my-issues" in settings:
+        for path in ("/inspection/my-rectifications", "/inspection/my-reviews"):
+            settings.setdefault(path, settings["/inspection/my-issues"])
+    return settings
 
 
 def normalize_page_visibility_items(raw_items):
@@ -5894,7 +5930,7 @@ def normalize_checklist_scope_name(value):
     )
 
 
-def get_role_default_inspection_table_ids(cur, role):
+def get_role_default_inspection_table_ids(cur, role, *, include_inactive=False):
     checklist_scope = ROLE_DEFAULT_CHECKLIST_SCOPES.get(role)
     if not checklist_scope:
         return []
@@ -5905,8 +5941,9 @@ def get_role_default_inspection_table_ids(cur, role):
         """
         SELECT id, table_name, checklist_mode
         FROM inspection_tables
-        WHERE is_active = TRUE;
-        """
+        WHERE (%s OR is_active = TRUE);
+        """,
+        (include_inactive,),
     )
     target_pairs = {
         (normalize_checklist_scope_name(table_name), checklist_mode)
@@ -6353,6 +6390,33 @@ def can_view_region_inspection_issues(cur, user):
 
 def can_view_own_inspection_issues(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_own_inspection_issues"))
+
+
+def can_view_rectification_queue(cur, user):
+    return bool((is_station_manager(user) or is_root_user(user))
+                and has_permission(cur, user, "view_my_rectification_issues"))
+
+
+def can_view_review_queue(cur, user):
+    return bool((is_supervisor_like(user) or has_role_default_checklist_scope(user))
+                and has_permission(cur, user, "view_my_review_issues"))
+
+
+def review_queue_scope(cur, user):
+    """Hard departmental boundary, independent of configurable issue-list scopes."""
+    if has_role_default_checklist_scope(user):
+        return "i.inspection_table_id = ANY(%s)", [
+            get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True)
+        ]
+    return "TRUE", []
+
+
+def issue_in_review_queue_scope(cur, user, issue):
+    if has_role_default_checklist_scope(user):
+        return issue.get("inspection_table_id") in get_role_default_inspection_table_ids(
+            cur, user["role"], include_inactive=True
+        )
+    return is_supervisor_like(user)
 
 
 def can_edit_inspection_issues(cur, user):
@@ -15575,11 +15639,7 @@ def get_inspection_sign_pending_count_for_user(cur, user):
 
 
 def get_my_pending_rectification_count_for_user(cur, user):
-    if (
-        not is_station_manager(user)
-        and not is_root_user(user)
-        and not is_supervisor_role(user.get("role"))
-    ):
+    if not can_view_rectification_queue(cur, user):
         return 0
 
     ensure_issue_inspector_schema(cur)
@@ -15600,14 +15660,15 @@ def get_my_pending_rectification_count_for_user(cur, user):
             (user["station_id"],),
         )
     else:
-        cur.execute(
-            """
-            SELECT COUNT(*) AS pending_count
-            FROM issues i
-            WHERE i.status = '待复核'
-              AND COALESCE(i.audit_status, 'pending') <> 'rejected';
-            """
-        )
+        return 0
+    return int(cur.fetchone()["pending_count"] or 0)
+
+
+def get_my_pending_review_count_for_user(cur, user):
+    if not can_view_review_queue(cur, user):
+        return 0
+    scope, params = review_queue_scope(cur, user)
+    cur.execute(f"SELECT COUNT(*) AS pending_count FROM issues i WHERE {PENDING_REVIEW_WHERE} AND {scope}", params)
     return int(cur.fetchone()["pending_count"] or 0)
 
 
@@ -15626,6 +15687,7 @@ def get_notification_summary():
         feedback_unread_count = get_feedback_unread_count(cur, current_user["id"])
         inspection_sign_pending_count = get_inspection_sign_pending_count_for_user(cur, current_user)
         my_pending_rectification_count = get_my_pending_rectification_count_for_user(cur, current_user)
+        my_pending_review_count = get_my_pending_review_count_for_user(cur, current_user)
         appeal_counts = appeal_notification_counts(cur, current_user, globals())
         from inspection_schedule_tasks import task_count, personal_agenda
         schedule_task_pending_count = task_count(cur, current_user['id'])
@@ -15642,6 +15704,7 @@ def get_notification_summary():
                 "feedback_unread_count": feedback_unread_count,
                 "inspection_sign_pending_count": inspection_sign_pending_count,
                 "my_pending_rectification_count": my_pending_rectification_count,
+                "my_pending_review_count": my_pending_review_count,
                 "appeal_notification_count": appeal_counts['total'],
                 "schedule_task_pending_count": schedule_task_pending_count,
                 "schedule_agenda": schedule_agenda,
@@ -25998,6 +26061,8 @@ def inspection_register():
 # ===== 新增：我的待整改/待复核问题相关API =====
 
 
+@app.route("/api/my-rectification-issues")
+@app.route("/api/my-review-issues")
 @app.route("/api/my-issues")
 def get_my_issues():
     user_id = get_authenticated_request_user_id(request.args.get("user_id"))
@@ -26025,7 +26090,12 @@ def get_my_issues():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if is_station_manager(user):
+        rectification_queue = request.path == "/api/my-rectification-issues" or (
+            request.path == "/api/my-issues" and is_station_manager(user)
+        )
+        if rectification_queue:
+            if not can_view_rectification_queue(cur, user):
+                return jsonify(success=False, error="当前账号无权查看待整改问题。"), 403
             ensure_issue_inspector_schema(cur)
             ensure_inspection_completion_schema(cur)
             sync_signed_inspections_completion(cur)
@@ -26120,9 +26190,12 @@ def get_my_issues():
                 ]
             )
 
-        if is_supervisor_like(user):
+        if can_view_review_queue(cur, user):
             page, page_size = normalize_page_args(request.args.get('page'), request.args.get('page_size') or 20)
             where_clause, params = build_pending_review_filters(request.args)
+            scope, scope_params = review_queue_scope(cur, user)
+            where_clause += " AND " + scope
+            params.extend(scope_params)
             cur.execute(f'SELECT COUNT(*) AS total {PENDING_REVIEW_JOINS} {where_clause}', params)
             total = int((cur.fetchone() or {}).get('total') or 0)
             page = min(page, max(1, (total + page_size - 1) // page_size))
@@ -26197,7 +26270,7 @@ def get_my_issues():
                 ]
             })
 
-        return jsonify([])
+        return jsonify(success=False, error="当前账号无权查看待复核问题。"), 403
     except IssueDescriptionFilterError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except ValueError:
@@ -26246,14 +26319,16 @@ def build_pending_review_filters(source):
     return 'WHERE ' + ' AND '.join(where), params
 
 
+@app.route('/api/my-review-issues/filter-options')
 @app.route('/api/my-issues/filter-options')
 def get_pending_review_filter_options():
     conn = cur = None
     try:
         conn = get_db_connection(); cur = conn.cursor()
         user = get_current_request_user()
-        if not is_supervisor_like(user):
+        if not can_view_review_queue(cur, user):
             return jsonify(success=False, error='当前账号无权查看待复核筛选项。'), 403
+        scope, params = review_queue_scope(cur, user)
         # Only distinct lightweight facets; never ship all issue descriptions or photos.
         cur.execute(f"""
             SELECT ARRAY_AGG(DISTINCT s.region) AS regions,
@@ -26261,8 +26336,8 @@ def get_pending_review_filter_options():
                    ARRAY_AGG(DISTINCT issue_inspector.real_name) AS inspectors,
                    ARRAY_AGG(DISTINCT t.table_name) AS inspection_tables,
                    ARRAY_AGG(DISTINCT i.internal_standard_id) AS codes
-            {PENDING_REVIEW_JOINS} WHERE {PENDING_REVIEW_WHERE}
-        """)
+            {PENDING_REVIEW_JOINS} WHERE {PENDING_REVIEW_WHERE} AND {scope}
+        """, params)
         row = cur.fetchone() or {}
         tag_map = fetch_internal_standard_tags_by_codes(cur, row.get('codes') or [])
         options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
@@ -33372,6 +33447,8 @@ def get_inspection_issues(inspection_id):
 
 
 def can_user_view_issue_flow_history(cur, user, issue):
+    if has_role_default_checklist_scope(user) and can_view_review_queue(cur, user) and issue_in_review_queue_scope(cur, user, issue):
+        return True
     if is_supervisor_like(user):
         return True
     if is_station_manager(user):
@@ -33449,6 +33526,8 @@ def serialize_issue_flow_history_event(row):
         event["action_label"] = "通过站级无法整改申请"
     elif action_type == "review_submitted" and result == "驳回站级无法整改":
         event["action_label"] = "驳回站级无法整改申请"
+    if action_type == "review_submitted" and event.get("actor_role") in ROLE_DEFAULT_CHECKLIST_SCOPES:
+        event["action_label"] = ROLE_LABELS[event["actor_role"]].removesuffix("账号") + "提交复核"
     if action_type == "audit_changed" and event["note"].startswith("自动审核"):
         event["action_label"] = "自动审核"
         event["actor_display_name"] = "系统自动审核"
@@ -33627,6 +33706,9 @@ def submit_rectification(issue_id):
                 403,
             )
 
+        if not (can_view_rectification_queue(cur, user) and has_permission(cur, user, "submit_my_rectification")):
+            return jsonify(success=False, error="当前账号无权提交整改。"), 403
+
         cur.execute(
             """
             SELECT
@@ -33771,15 +33853,15 @@ def submit_review(issue_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not is_supervisor_like(user):
+        if not (can_view_review_queue(cur, user) and has_permission(cur, user, "submit_my_issue_reviews")):
             return (
-                jsonify({"success": False, "error": "只有督导组账号可以提交复核。"}),
+                jsonify({"success": False, "error": "当前账号无权提交复核。"}),
                 403,
             )
 
         cur.execute(
             """
-            SELECT i.id, i.status, i.rectification_result,
+            SELECT i.id, i.inspection_table_id, i.status, i.rectification_result,
                 COALESCE(i.audit_status, 'pending') AS audit_status, t.checklist_mode
             FROM issues i
             LEFT JOIN inspection_tables t ON t.id = i.inspection_table_id
@@ -33793,6 +33875,9 @@ def submit_review(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "问题不存在。"}), 404
+
+        if not issue_in_review_queue_scope(cur, user, issue):
+            return jsonify(success=False, error="只能复核本部门所属检查表的问题。"), 403
 
         if is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "该问题已被审核否决，不再参与复核流转。"}), 400
@@ -33858,7 +33943,7 @@ def submit_review(issue_id):
         if transition["returns_to_station"]:
             message = "复核已提交，问题已退回站经理重新整改。"
         else:
-            message = f"督导组复核提交成功，问题状态已更新为{new_status}。"
+            message = f"复核提交成功，问题状态已更新为{new_status}。"
         return jsonify(
             {
                 "success": True,

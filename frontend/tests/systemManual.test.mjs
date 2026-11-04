@@ -5,6 +5,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { createManualPreviewCache } from '../src/utils/manualLibrary.js'
 import { PAGE_VISIBILITY_GROUPS } from '../src/config/pageVisibilityCatalog.js'
 import { certificatePages, canAccessCertificates } from '../src/config/certificateCatalog.js'
+import { canAccessIssueQueue, issueQueuePaths } from '../src/utils/issueQueueAccess.js'
 
 const source = readFileSync(new URL('../src/views/HelpDocumentsView.vue', import.meta.url), 'utf8')
 const png = () => new Blob(['fake-png'], { type: 'image/png' })
@@ -89,6 +90,8 @@ test('manual is a signed-in common menu without role or individual permission ga
     'hasPermission',
     'reportPerspective',
     'canAccessCertificates',
+    'canAccessIssueQueue',
+    'issueQueuePaths',
     `return (${accessBody})`,
   )(
     () => false,
@@ -96,6 +99,8 @@ test('manual is a signed-in common menu without role or individual permission ga
     () => false,
     () => null,
     canAccessCertificates,
+    canAccessIssueQueue,
+    issueQueuePaths,
   )
   for (const role of [
     'root',
@@ -120,8 +125,10 @@ test('manual is a signed-in common menu without role or individual permission ga
     'reportPerspective',
     'certificatePages',
     'canAccessCertificates',
+    'canAccessIssueQueue',
+    'issueQueuePaths',
     `return (${fallbackBody})`,
-  )(() => false, [], canAccess, () => null, certificatePages, canAccessCertificates)
+  )(() => false, [], canAccess, () => null, certificatePages, canAccessCertificates, canAccessIssueQueue, issueQueuePaths)
   assert.equal(
     fallback('reader', {}, (path) => path === '/help-documents'),
     '/help-documents',

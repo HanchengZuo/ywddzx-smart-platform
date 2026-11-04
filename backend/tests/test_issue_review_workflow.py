@@ -111,6 +111,8 @@ class ReviewSubmissionTests(unittest.TestCase):
             stack.enter_context(patch.object(core_app, 'get_authenticated_request_user_id', return_value=user_id))
             stack.enter_context(patch.object(core_app, 'get_db_connection', return_value=conn))
             stack.enter_context(patch.object(core_app, 'ensure_issue_inspector_schema'))
+            stack.enter_context(patch.object(core_app, 'has_permission',
+                side_effect=lambda _, user, key: core_app.role_default_permission(user['role'], key)))
             stack.enter_context(patch.object(core_app, 'close_db_resources'))
             saved = stack.enter_context(patch.object(core_app, 'save_uploaded_file', return_value='rectifications/review.jpg'))
             event = stack.enter_context(patch.object(core_app, 'record_issue_workflow_event'))
@@ -271,6 +273,8 @@ class UnableClosureDatabaseTests(unittest.TestCase):
         stack.enter_context(patch.object(core_app,'get_authenticated_request_user_id',return_value=17))
         stack.enter_context(patch.object(core_app,'get_db_connection',side_effect=self.connect))
         stack.enter_context(patch.object(core_app,'ensure_issue_inspector_schema'))
+        stack.enter_context(patch.object(core_app,'has_permission',
+            side_effect=lambda _, user, key: core_app.role_default_permission(user['role'], key)))
         # No real upload or business file is created during database verification.
         stack.enter_context(patch.object(core_app,'save_uploaded_file',return_value='rectifications/fixture.jpg'))
         return stack

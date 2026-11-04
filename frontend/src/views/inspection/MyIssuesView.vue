@@ -17,10 +17,10 @@
       <div class="summary-card card-surface">
         <div class="summary-label">当前视角</div>
         <div class="summary-value summary-value-small">
-          {{ currentRole === 'station_manager' ? '站点账号' : '督导组账号' }}
+          {{ queueScopeLabel }}
         </div>
         <div class="summary-desc">
-          {{ currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，复核说明选填，照片要求随结论变化' }}
+          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，复核说明选填，照片要求随结论变化' : '仅可查看，提交处理权限尚未开启' }}
         </div>
       </div>
 
@@ -30,6 +30,9 @@
         <div class="summary-desc">复核或申诉被驳回，需要继续整改的问题</div>
       </div>
     </div>
+    <p v-if="departmentQueue" class="queue-hint card-surface" style="padding: 14px 18px">
+      仅显示本部门所属检查表的待复核问题（含历史版本）。此范围固定，不受巡检问题列表权限影响。
+    </p>
 
     <template v-if="currentRole === 'station_manager'">
       <div v-for="notice in returnNotices" :key="notice.kind" class="return-overview-alert card-surface"
@@ -220,7 +223,7 @@
 
           <div class="mobile-card-actions action-stack">
             <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
-              :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
+              :disabled="!canSubmitQueue || (currentRole === 'station_manager' && !isInspectionSigned(item))">
               {{ currentRole === 'station_manager'
                 ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                 : '提交复核' }}
@@ -390,7 +393,7 @@
                 <td v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">
                   <div class="action-stack">
                   <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
-                    :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
+                    :disabled="!canSubmitQueue || (currentRole === 'station_manager' && !isInspectionSigned(item))">
                     {{ currentRole === 'station_manager'
                       ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                       : '提交复核' }}
@@ -465,7 +468,7 @@
       <div class="drawer-panel">
         <div class="drawer-header">
           <div>
-            <h3>{{ currentRole === 'station_manager' ? '提交整改' : '提交督导组复核' }}</h3>
+            <h3>{{ currentRole === 'station_manager' ? '提交整改' : '提交问题复核' }}</h3>
             <p>{{ actionDrawer.item?.station }}｜规范ID {{ actionDrawer.item?.standard_id || '暂无' }}</p>
           </div>
           <button class="drawer-close" type="button" @click="closeActionDrawer">×</button>
@@ -549,7 +552,7 @@
 
           <template v-else>
             <div class="form-item">
-              <label>督导组复核结果</label>
+              <label>复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
                 <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
@@ -557,7 +560,7 @@
             </div>
 
             <div class="form-item">
-              <label>督导组复核说明 <span class="optional-field-tag">选填</span></label>
+              <label>复核说明 <span class="optional-field-tag">选填</span></label>
               <textarea v-model="actionForm.reviewNote" rows="4"
                 placeholder="可填写复核依据或退回原因，不填写也可以提交"></textarea>
               <div class="field-help-text">复核说明允许为空；选择整改不通过时，建议写明需要重新整改的原因。</div>
@@ -622,7 +625,7 @@
 <script setup>
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import { useRouter } from 'vue-router'
-import { isSupervisorRole } from '@/utils/roles'
+import { canSubmitIssueQueue, departmentReviewRoles } from '@/utils/issueQueueAccess.js'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
@@ -670,13 +673,20 @@ const appealSubmitted = () => {
 }
 
 
-const currentRole = ref(localStorage.getItem('user_role') || '')
-const isSupervisorLike = computed(() => currentRole.value === 'root' || isSupervisorRole(currentRole.value))
+const props = defineProps({ queue: { type: String, required: true } })
+const accountRole = localStorage.getItem('user_role') || ''
+// Shared UI follows the independent route, not the user's role.
+const currentRole = computed(() => props.queue === 'rectification' ? 'station_manager' : accountRole)
+let queuePermissions = {}
+try { queuePermissions = JSON.parse(localStorage.getItem('permissions') || '{}') } catch { /* Server remains authoritative. */ }
+const canSubmitQueue = computed(() => canSubmitIssueQueue(accountRole, queuePermissions, props.queue))
+const departmentQueue = computed(() => props.queue === 'review' && departmentReviewRoles.includes(accountRole))
+const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : departmentQueue.value ? '本部门检查表' : '全部待复核')
 const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
 const myIssuesEmptyDescription = computed(() => (
   currentRole.value === 'station_manager'
     ? '目前没有需要你提交整改反馈的问题，后续新任务会在这里集中出现。'
-    : '目前没有需要督导组复核的问题，已提交整改反馈的事项会自动进入这里。'
+    : '当前可见范围内没有待复核问题，站点提交整改后符合范围的事项会自动进入这里。'
 ))
 const loading = ref(false)
 const submittingAction = ref(false)
@@ -1154,7 +1164,7 @@ const fetchMyIssues = async ({ preserveList = false } = {}) => {
   try {
     // Keep the list mounted after submission so its scroll range cannot collapse.
     loading.value = !preserveList
-    const response = await axios.get('/api/my-issues', {
+    const response = await axios.get(isReviewQueue.value ? '/api/my-review-issues' : '/api/my-rectification-issues', {
       params: isReviewQueue.value ? {
         ...reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value),
         ...(isMobileReview.value ? { keyword: appliedFilters.value.keyword.trim() } : {}),
@@ -1194,7 +1204,7 @@ const fetchReviewOptions = async () => {
   optionsLoading.value = true; optionsError.value = ''
   optionsController = new AbortController()
   try {
-    const { data } = await axios.get('/api/my-issues/filter-options', { signal: optionsController.signal })
+    const { data } = await axios.get('/api/my-review-issues/filter-options', { signal: optionsController.signal })
     if (!data?.success) throw new Error(data?.error)
     serverOptions.value = data.filter_options || {}
   } catch (error) {
@@ -1228,6 +1238,10 @@ const fetchIssueFlowHistory = async (issueId) => {
 }
 
 const openActionDrawer = (item) => {
+  if (!canSubmitQueue.value) {
+    showActionToast('当前账号只有查看权限，不能提交处理。', 'error')
+    return
+  }
   if (currentRole.value === 'station_manager' && !isInspectionSigned(item)) {
     showActionToast('当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。', 'error')
     return
@@ -1341,6 +1355,10 @@ const showActionToast = (message, type = 'info') => {
 
 const submitAction = async () => {
   if (!actionDrawer.value.item || submittingAction.value || reviewPhotoProcessing.value) return
+  if (!canSubmitQueue.value) {
+    showActionToast('当前账号没有提交处理权限。', 'error')
+    return
+  }
 
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
@@ -1392,7 +1410,7 @@ const submitAction = async () => {
     }
 
     if (!actionForm.value.reviewResult) {
-      showActionToast('请选择督导组复核结果。', 'error')
+      showActionToast('请选择复核结果。', 'error')
       return
     }
     const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode)
