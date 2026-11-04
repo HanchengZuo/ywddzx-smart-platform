@@ -14,6 +14,14 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v13.0 独立整改与复核权限
+
+“我的待整改问题”（`/inspection/my-rectifications`）与“我的待复核问题”（`/inspection/my-reviews`）为独立页面，共用处理组件但不再按角色混用同一菜单。分别配置 `view_my_rectification_issues` / `submit_my_rectification`、`view_my_review_issues` / `submit_my_issue_reviews`，提交权限依赖对应查看权限，可设置为只读。站点默认保留本站整改，两类督导组默认保留全部复核；五类处室默认启用复核，片区不默认开放，也不能用此权限扩大角色范围。角色模板和个人覆盖沿用现有优先级。
+
+处室复核范围固定：质安部为计量、无异味及质量安全环保；发展计划部为设备设施；油气事业部为无异味及现场明细；非油事业部为非油现场和团购；财务部为财务检查表。包含历史版本和已停用检查表的待复核问题，不依赖巡检问题列表的范围开关，也不能通过筛选或直接提交跨部门访问。列表、筛选候选、未读计数、提交复核及配套流转记录均在服务端校验。沿用原照片规则、问题状态检查、行锁与事务留痕，不授予审核或其他管理权限。
+
+新增 `/api/my-rectification-issues` 与 `/api/my-review-issues`（含 `/filter-options`）。旧 `/api/my-issues` 保留兼容，旧前端入口按角色重定向，原全局隐藏设置作为新菜单的缺省值。无数据库结构迁移，不清空或覆盖原用户权限。
+
 ## v12.9.1 巡检完成统计口径
 
 现场检查表在统计周期内有巡检记录即计完成。视频检查表（含年度计量中的视频表）必须在“巡检记录”中达到“已确认完成”才计入，空表与有问题的记录规则相同，不要求审核或站经理签名。新口径统一用于排班、排班地图、个人待办、待办总览、人员档期的实绩及派工进度、计量年度计划和智能排班。排班地图仍按任一对应检查表完成销项，排班与待办的整站完成仍按全部应检表判断。

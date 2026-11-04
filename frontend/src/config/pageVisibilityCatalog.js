@@ -33,10 +33,10 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '查看检查表 PDF 原件和外部规范列表。'
       },
       {
-        key: '/inspection/my-issues',
-        path: '/inspection/my-issues',
-        title: '我的待复核/待整改问题',
-        description: '按账号角色显示待复核或待整改问题。'
+        key: '/inspection/my-rectifications',
+        path: '/inspection/my-rectifications',
+        title: '我的待整改问题',
+        description: '站点查看本站待整改问题，查看与提交整改分别授权。'
       },
       {
         key: '/inspection/issues',
@@ -55,6 +55,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         path: '/inspection/records',
         title: '巡检记录',
         description: '查看巡检记录、问题明细和巡检流程状态。'
+      },
+      {
+        key: '/inspection/my-reviews',
+        path: '/inspection/my-reviews',
+        title: '我的待复核问题',
+        description: '督导组查看全部，处室查看本部门检查表问题；查看与提交复核分别授权。'
       },
       {
         key: '/inspection/appeals',

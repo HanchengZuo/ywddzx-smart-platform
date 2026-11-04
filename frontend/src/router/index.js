@@ -5,6 +5,7 @@ import StationMapView from '../views/inspection/StationMapView.vue'
 import { operationsPages } from '../config/operationsCatalog'
 import { certificatePages, canAccessCertificates } from '../config/certificateCatalog'
 import { isSupervisorRole } from '../utils/roles'
+import { canAccessIssueQueue, issueQueuePaths, legacyIssueQueuePath } from '../utils/issueQueueAccess.js'
 import { reportPerspective } from '../utils/reportAccess'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
 import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisibility'
@@ -75,8 +76,16 @@ const routes = [
     component: () => import('../views/inspection/ReportGeneratorView.vue')
   },
   {
+    path: '/inspection/my-rectifications',
+    component: () => import('../views/inspection/MyRectificationIssuesView.vue')
+  },
+  {
+    path: '/inspection/my-reviews',
+    component: () => import('../views/inspection/MyReviewIssuesView.vue')
+  },
+  {
     path: '/inspection/my-issues',
-    component: () => import('../views/inspection/MyIssuesView.vue')
+    redirect: () => legacyIssueQueuePath(localStorage.getItem('user_role') || '')
   },
   {
     path: '/assessment',
@@ -228,7 +237,8 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/inspection/task-overview') return hasPermission(role, permissions, 'view_schedule_task_overview')
   if (path === '/inspection/reports') return Boolean(reportPerspective(role, permissions))
   if (path.startsWith('/certificates/')) return canAccessCertificates(role, permissions, path)
-  if (path === '/inspection/my-issues') return isSupervisorRole(role) || role === 'station_manager'
+  if (path === issueQueuePaths.rectification) return canAccessIssueQueue(role, permissions, 'rectification')
+  if (path === issueQueuePaths.review) return canAccessIssueQueue(role, permissions, 'review')
   if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
   if (path === '/assessment/station-score') return hasPermission(role, permissions, 'view_station_scores')
@@ -247,7 +257,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
       '/management/page-visibility'
     )
   }
-  if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  if (canAccessIssueQueue(role, permissions, 'rectification')) candidates.push(issueQueuePaths.rectification)
   operationsPages.forEach(page => { if (permissions[page.permission]) candidates.push(page.path) })
   if (permissions.view_station_map) candidates.push('/inspection/station-map')
   if (permissions.view_scheduling_map) candidates.push('/inspection/scheduling-map')
@@ -280,7 +290,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (role === 'root') {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
   }
-  if (isSupervisorRole(role)) candidates.push('/inspection/my-issues')
+  if (canAccessIssueQueue(role, permissions, 'review')) candidates.push(issueQueuePaths.review)
   candidates.push('/feedback', '/help-documents')
 
   return candidates.find((path) => canAccessPath(path, role, permissions) && isPathVisible(path)) || '/feedback'

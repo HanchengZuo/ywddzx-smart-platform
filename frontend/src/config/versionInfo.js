@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.0', date: '2026-11-04', title: '独立整改复核菜单与处室复核',
+    summary: '我的待整改与我的待复核拆分独立页面，查看与提交分别授权。',
+    items: ['保留站点本站整改和两类督导组全部复核默认能力，支持关闭提交后只读查看。',
+      '五类处室默认可复核本部门检查表问题，列表、筛选、未读数量和提交均校验固定部门范围，包含历史版本。',
+      '新增独立菜单显示设置，旧入口按角色跳转；沿用照片要求、并发校验及真实操作人流转留痕。'] },
   { version: 'v12.9.1', date: '2026-11-04', title: '视频巡检按确认状态统计完成',
     summary: '视频检查在巡检记录中确认完成后才计入，现场检查维持原口径。',
     items: ['排班、待办、排班地图、档期实绩及计量年度进度同步采用新口径，适用于空表和问题记录。',

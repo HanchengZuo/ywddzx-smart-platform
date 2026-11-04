@@ -684,6 +684,8 @@ const exclusivePermissionGroups = [
 ]
 
 const dependentPermissionMap = {
+  submit_my_rectification: 'view_my_rectification_issues',
+  submit_my_issue_reviews: 'view_my_review_issues',
   adjust_station_scores: 'view_station_scores',
   reset_station_account_password: 'manage_stations',
   generate_inspection_reports: 'view_inspection_reports',
@@ -768,6 +770,16 @@ const normalizeStationRegionScopeMap = (value) => {
 }
 
 const scopedPermissionLayouts = {
+  '我的待整改问题': {
+    scopeKeys: ['view_my_rectification_issues'], actionKeys: ['submit_my_rectification'],
+    readonlyItems: [{ key: 'rectification_queue_scope', name: '本站待整改（固定范围）',
+      description: '站点只看本站已验收且审核通过的待整改问题；原有站点权限默认保留。此处独立于巡检问题列表权限。' }]
+  },
+  '我的待复核问题': {
+    scopeKeys: ['view_my_review_issues'], actionKeys: ['submit_my_issue_reviews'],
+    readonlyItems: [{ key: 'review_queue_scope', name: '按角色固定范围，不可跨部门扩大',
+      description: '督导组管理人员、组员及Root查看全部待复核；质安部（计量、无异味、质量安全环保）、发展计划部（设备设施）、油气事业部（无异味、现场明细）、非油事业部（非油现场及团购）、财务部（财务）仅查看并复核本部门检查表，包含历史版本。片区和站点不开放复核；查看和提交可分别关闭。' }]
+  },
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],
     actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector'],
@@ -849,7 +861,7 @@ const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
 
     const scopeKeys = new Set(layout.scopeKeys || [])
     const actionKeys = new Set(layout.actionKeys || [])
-    const readonlyItems = (group.category === '证照管理' || (includeReadonlyItems && isSupervisorRole(role))) ? (layout.readonlyItems || []) : []
+    const readonlyItems = (['证照管理', '我的待整改问题', '我的待复核问题'].includes(group.category) || (includeReadonlyItems && isSupervisorRole(role))) ? (layout.readonlyItems || []) : []
     return {
       ...group,
       hasScopedLayout: true,
