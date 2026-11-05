@@ -673,9 +673,10 @@
                 <p v-if="issue.rectification_note">{{ issue.rectification_note }}</p>
               </div>
               <div class="batch-issue-section">
-                <span>督导复核</span>
-                <p>{{ issue.review_result || '暂无复核结果' }}</p>
-                <p>复核时间：{{ issue.review_at || '暂无' }}</p>
+                <span>问题复核</span>
+                <p>{{ issue.review_result || '暂无问题复核结果' }}</p>
+                <p>问题复核人员：{{ issue.reviewer || '暂无' }}</p>
+                <p>问题复核时间：{{ issue.review_at || '暂无' }}</p>
                 <p v-if="issue.review_note">{{ issue.review_note }}</p>
               </div>
 
@@ -697,12 +698,12 @@
                   <div v-else class="batch-issue-image-empty">暂无整改照片</div>
                 </div>
                 <div class="batch-issue-image-card">
-                  <span>复核照片</span>
-                  <button v-if="issue.review_photo" type="button" class="record-photo-trigger" aria-label="放大复核照片"
-                    @click="previewPhoto(issue.review_photo, '复核照片')">
-                    <img :src="resolveImage(issue.review_photo)" class="batch-issue-image" alt="复核照片" loading="lazy" decoding="async" />
+                  <span>问题复核照片</span>
+                  <button v-if="issue.review_photo" type="button" class="record-photo-trigger" aria-label="放大问题复核照片"
+                    @click="previewPhoto(issue.review_photo, '问题复核照片')">
+                    <img :src="resolveImage(issue.review_photo)" class="batch-issue-image" alt="问题复核照片" loading="lazy" decoding="async" />
                   </button>
-                  <div v-else class="batch-issue-image-empty">暂无复核照片</div>
+                  <div v-else class="batch-issue-image-empty">暂无问题复核照片</div>
                 </div>
               </div>
             </div>
@@ -1162,8 +1163,9 @@ const buildBatchDetailExportHtml = async () => {
           ${exportInfoItem('规范ID', issue.standard_id)}
           ${exportInfoItem('整改结果', issue.rectification_result)}
           ${exportInfoItem('整改时间', issue.rectification_at)}
-          ${exportInfoItem('复核结果', issue.review_result)}
-          ${exportInfoItem('复核时间', issue.review_at)}
+          ${exportInfoItem('问题复核结果', issue.review_result)}
+          ${exportInfoItem('问题复核人员', issue.reviewer)}
+          ${exportInfoItem('问题复核时间', issue.review_at)}
         </div>
         <div class="text-block">
           <h3>引用规范</h3>
@@ -1178,13 +1180,13 @@ const buildBatchDetailExportHtml = async () => {
           <p>${htmlWithLineBreaks(issue.rectification_note)}</p>
         </div>
         <div class="text-block">
-          <h3>督导复核说明</h3>
+          <h3>问题复核说明</h3>
           <p>${htmlWithLineBreaks(issue.review_note)}</p>
         </div>
         <div class="photo-grid">
           ${exportImageBlock('问题照片', issuePhotoUrl)}
           ${exportImageBlock('整改照片', rectificationPhotoUrl)}
-          ${exportImageBlock('复核照片', reviewPhotoUrl)}
+          ${exportImageBlock('问题复核照片', reviewPhotoUrl)}
         </div>
       </section>
     `).join('')

@@ -6,7 +6,7 @@
 -- 4. 绑定所属检查表 inspection_tables
 -- 5. 记录所选规范的全局唯一 standard_id
 -- 6. 保存规范详情快照，便于统一展示与后续追溯
--- 7. 保存站点整改反馈与督导组复核反馈
+-- 7. 保存站点整改反馈与问题复核反馈
 --
 -- 说明：
 -- - 每条 issues 记录对应一次“发现问题”
@@ -15,10 +15,10 @@
 -- - 规范详情统一落为 standard_detail_text，供问题列表/我的问题统一展示
 --
 -- status 说明：
--- - 待整改：问题刚录入，或督导复核不通过后退回站点重新整改
--- - 待复核：站点已提交整改，等待督导组复核
--- - 已闭环：督导组确认问题已经整改，流程关闭
--- - 站经无法整改：督导组确认该问题属于站经理无法整改事项
+-- - 待整改：问题刚录入，或问题复核不通过后退回站点重新整改
+-- - 待复核：站点已提交整改，等待问题复核
+-- - 已闭环：复核人员确认问题已经整改，流程关闭
+-- - 站经无法整改：复核人员确认该问题属于站经理无法整改事项（历史存储名）
 
 CREATE TABLE issues (
     id SERIAL PRIMARY KEY,                                                    -- 问题ID，主键，自增
@@ -41,10 +41,10 @@ CREATE TABLE issues (
     rectification_at TIMESTAMP,                                               -- 站点提交整改时间
     rectification_photo_path TEXT,                                            -- 站点整改照片路径
 
-    review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改 / 整改不通过
-    review_note TEXT,                                                         -- 督导组复核说明
-    review_at TIMESTAMP,                                                      -- 督导组提交复核时间
-    review_photo_path TEXT,                                                   -- 督导组复核照片路径
+    review_result TEXT,                                                       -- 问题复核结果：已整改 / 站经无法整改 / 整改不通过
+    review_note TEXT,                                                         -- 问题复核说明
+    review_at TIMESTAMP,                                                      -- 提交问题复核时间
+    review_photo_path TEXT,                                                   -- 问题复核照片路径
 
     audit_status TEXT NOT NULL DEFAULT 'pending',                             -- 审核状态：pending / approved / rejected
     audited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,               -- 审核人

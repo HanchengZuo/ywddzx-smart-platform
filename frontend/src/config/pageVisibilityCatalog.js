@@ -60,7 +60,7 @@ export const PAGE_VISIBILITY_GROUPS = [
         key: '/inspection/my-reviews',
         path: '/inspection/my-reviews',
         title: '我的待复核问题',
-        description: '督导组查看全部，处室查看本部门检查表问题；查看与提交复核分别授权。'
+        description: '督导中心按分工复核，处室查看本部门检查表问题；查看与提交复核分别授权。'
       },
       {
         key: '/inspection/appeals',
