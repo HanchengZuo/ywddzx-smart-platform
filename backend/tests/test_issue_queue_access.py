@@ -1,4 +1,5 @@
 """Independent queue permissions and fixed departmental boundaries."""
+import importlib
 import os
 import unittest
 from contextlib import ExitStack
@@ -6,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+import psycopg2
 import app as api
 from tests import test_issue_review_workflow as review_tests
 
@@ -60,6 +62,65 @@ class QueuePermissionTests(unittest.TestCase):
             settings=api.fetch_page_visibility_settings(cur)
         self.assertFalse(settings['/inspection/my-rectifications'])
         self.assertTrue(settings['/inspection/my-reviews'])
+
+
+@unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST')=='1', 'isolated database opt-in')
+class OdorOwnershipMigrationTests(unittest.TestCase):
+    tearDown=review_tests.UnableClosureDatabaseTests.tearDown
+
+    def setUp(self):
+        review_tests.UnableClosureDatabaseTests.setUp(self)
+        self.migration=importlib.import_module('migrations.versions.20261105_001_review_perspectives')
+        self.cur.execute("""
+            INSERT INTO inspection_tables VALUES
+                (7,'环境无异味管理检查表（现场）','offline'),
+                (8,'环境无异味管理检查表','offline'),
+                (9,'现场检查明细表（现场）','offline');
+            CREATE TABLE role_inspection_table_scopes (
+                role text,scope_key text,inspection_table_id integer,updated_by integer,
+                created_at timestamp DEFAULT CURRENT_TIMESTAMP,updated_at timestamp DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(role,scope_key,inspection_table_id));
+            INSERT INTO role_inspection_table_scopes(role,scope_key,inspection_table_id,updated_by) VALUES
+                ('oil_gas','limit_issue_inspection_table_scope',7,17),
+                ('oil_gas','limit_record_inspection_table_scope',8,17),
+                ('oil_gas','limit_issue_inspection_table_scope',9,17),
+                ('quality_safety','limit_issue_inspection_table_scope',7,17);
+            CREATE TABLE user_inspection_table_scopes(user_id integer,inspection_table_id integer);
+            INSERT INTO user_inspection_table_scopes VALUES(17,7);
+            CREATE TABLE security_audit_logs(actor_username text,actor_role text,action_type text,
+                action_result text,affected_count integer,details jsonb,created_at timestamp);
+        """)
+        self.admin.commit()
+
+    def migrate(self):
+        with patch.object(self.migration.op,'execute',side_effect=self.cur.execute):
+            self.migration.upgrade()
+
+    def test_targeted_correction_is_audited_and_idempotent(self):
+        self.migrate()
+        self.migrate()
+        self.cur.execute('SELECT role,inspection_table_id FROM role_inspection_table_scopes ORDER BY role')
+        self.assertEqual([(r['role'],r['inspection_table_id']) for r in self.cur.fetchall()],
+                         [('oil_gas',9),('quality_safety',7)])
+        self.cur.execute('SELECT * FROM user_inspection_table_scopes')
+        self.assertEqual(self.cur.fetchall(),[dict(user_id=17,inspection_table_id=7)])
+        self.cur.execute('SELECT * FROM security_audit_logs')
+        logs=self.cur.fetchall()
+        self.assertEqual(len(logs),1)
+        self.assertEqual(logs[0]['affected_count'],2)
+        self.assertEqual({r['inspection_table_id'] for r in logs[0]['details']['removed_scopes']},{7,8})
+        self.assertTrue(all(r['updated_by']==17 and r['created_at'] for r in logs[0]['details']['removed_scopes']))
+
+    def test_audit_failure_rolls_back_the_scope_removal(self):
+        self.cur.execute("ALTER TABLE security_audit_logs ADD CONSTRAINT deny_test_audit CHECK(action_type <> 'oil_gas_odor_scope_migrated')")
+        self.admin.commit()
+        with self.assertRaises(psycopg2.IntegrityError):
+            self.migrate()
+        self.admin.rollback()
+        self.cur.execute('SELECT count(*) AS n FROM role_inspection_table_scopes')
+        self.assertEqual(self.cur.fetchone()['n'],4)
+        self.cur.execute('SELECT count(*) AS n FROM security_audit_logs')
+        self.assertEqual(self.cur.fetchone()['n'],0)
 
 
 @unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST')=='1', 'isolated database opt-in')
@@ -134,8 +195,8 @@ class QueueScopeDatabaseTests(unittest.TestCase):
 
     def test_all_departments_get_only_their_tables_in_list_filters_and_badges(self):
         for role,ids in [('quality_safety',{42,44}),('finance',{45}),('development_plan',{46}),
-                         ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44,45,46,47,48}),
-                         ('supervisor_manager',{42,44,45,46,47,48})]:
+                         ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44,48}),
+                         ('supervisor_manager',{42,44,48}),('root',{42,44,45,46,47,48})]:
             with self.subTest(role=role):
                 self.role(role)
                 body,status=self.call('/api/my-review-issues',api.get_my_issues)
@@ -146,7 +207,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
                 self.assertEqual(status,200)
                 self.assertEqual(set(facets['filter_options']['inspection_tables']),
                                  {r['inspection_table_name'] for r in body['items']})
-                if role in api.ROLE_DEFAULT_CHECKLIST_SCOPES:
+                if role != 'root':
                     self.assertEqual({r['table_name'] for r in facets['scope_tables']},
                                      {r['inspection_table_name'] for r in body['items']})
                 self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),len(ids))
@@ -154,6 +215,45 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         body,status=self.call('/api/my-review-issues?issue_id=45&inspection_tables=["财务检查表（现场）"]',
                               api.get_my_issues)
         self.assertEqual((status,body['total']),(200,0))
+
+    def test_supervisor_cannot_filter_or_review_delegated_departments_including_inactive_tables(self):
+        self.cur.execute("UPDATE inspection_tables SET is_active=false WHERE id IN (3,4,5)")
+        self.admin.commit()
+        for role in ('supervisor','supervisor_manager'):
+            self.role(role)
+            for issue_id in (45,46,47):
+                body,status=self.call('/api/my-review-issues?issue_id='+str(issue_id),api.get_my_issues)
+                self.assertEqual((status,body['total']),(200,0))
+                body,status=self.call('/api/issues/'+str(issue_id)+'/review',
+                    lambda:api.submit_review(issue_id),method='POST',
+                    data={'review_result':'整改不通过','review_photo':(BytesIO(b'fixture'),'fixture.png')})
+                self.assertEqual(status,403,body)
+            self.saved.assert_not_called()
+        self.cur.execute('SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id IN (45,46,47)')
+        self.assertEqual(self.cur.fetchone()['n'],0)
+
+    def test_odor_belongs_only_to_quality_and_remains_in_supervision_center(self):
+        self.cur.execute("INSERT INTO inspection_tables VALUES(7,'环境无异味管理检查表（现场）','offline',true)")
+        self.cur.execute("INSERT INTO issues(id,inspection_table_id,status,rectification_result,audit_status) VALUES(49,7,'待复核','已整改','approved')")
+        self.admin.commit()
+        for role, visible in [('quality_safety',True),('oil_gas',False),('supervisor',True),('supervisor_manager',True)]:
+            self.role(role)
+            body,status=self.call('/api/my-review-issues?issue_id=49',api.get_my_issues)
+            self.assertEqual((status,body['total']),(200,1 if visible else 0))
+        self.role('oil_gas')
+        self.assertNotIn(7,api.get_role_default_inspection_table_ids(self.cur,'oil_gas'))
+        self.assertIn(7,api.get_role_default_inspection_table_ids(self.cur,'quality_safety'))
+        self.assertEqual(self.call('/api/issues/49/review',lambda:api.submit_review(49),method='POST',
+                                  data={'review_result':'整改不通过'})[1],403)
+
+    def test_delegated_departments_can_still_review_their_own_tables(self):
+        for role,issue_id in [('development_plan',46),('oil_gas',47),('finance',45)]:
+            self.role(role)
+            body,status=self.call('/api/issues/'+str(issue_id)+'/review',lambda:api.submit_review(issue_id),
+                                  method='POST',data={'review_result':'整改不通过','review_note':'部门复核'})
+            self.assertEqual((status,body.get('status')),(200,'待整改'))
+            self.cur.execute("SELECT actor_role FROM inspection_issue_flow_history WHERE issue_id=%s AND action_type='review_submitted'",(issue_id,))
+            self.assertEqual(self.cur.fetchone()['actor_role'],role)
 
     def test_cross_department_submit_cannot_save_files_update_issue_or_write_history(self):
         self.role('quality_safety')

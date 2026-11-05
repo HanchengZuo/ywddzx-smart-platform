@@ -99,7 +99,7 @@ class ReviewSubmissionTests(unittest.TestCase):
         conn, cur = MagicMock(), MagicMock()
         conn.cursor.return_value = cur
         user = dict(id=17, username='reviewer', real_name='复核人员', role=role)
-        cur.fetchone.side_effect = [user, dict(id=42, status=status,
+        cur.fetchone.side_effect = [user, dict(id=42, inspection_table_id=1, status=status,
             rectification_result=station_result, audit_status=audit, checklist_mode=checklist_mode)]
         data = dict(user_id='17', review_result=result, review_note='')
         if posted_mode is not None:
@@ -111,6 +111,7 @@ class ReviewSubmissionTests(unittest.TestCase):
             stack.enter_context(patch.object(core_app, 'get_authenticated_request_user_id', return_value=user_id))
             stack.enter_context(patch.object(core_app, 'get_db_connection', return_value=conn))
             stack.enter_context(patch.object(core_app, 'ensure_issue_inspector_schema'))
+            stack.enter_context(patch.object(core_app, 'review_queue_table_ids', return_value=[1]))
             stack.enter_context(patch.object(core_app, 'has_permission',
                 side_effect=lambda _, user, key: core_app.role_default_permission(user['role'], key)))
             stack.enter_context(patch.object(core_app, 'close_db_resources'))

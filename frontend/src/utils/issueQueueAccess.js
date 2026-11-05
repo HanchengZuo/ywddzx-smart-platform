@@ -1,6 +1,11 @@
 import { isSupervisorRole } from './roles.js'
 
 export const departmentReviewRoles = ['quality_safety', 'development_plan', 'oil_gas', 'non_oil', 'finance']
+export function reviewQueuePerspective(role) {
+  if (isSupervisorRole(role)) return '督导中心视角'
+  const departments = { quality_safety: '质安部', development_plan: '发展计划部', oil_gas: '油气事业部', non_oil: '非油事业部', finance: '财务部' }
+  return departments[role] ? departments[role] + '视角' : '全部待复核'
+}
 export const issueQueuePaths = {
   rectification: '/inspection/my-rectifications',
   review: '/inspection/my-reviews',

@@ -736,7 +736,6 @@ DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE = [
     ("设备设施检查表", "offline"),
 ]
 OIL_GAS_DEFAULT_CHECKLIST_SCOPE = [
-    ("环境无异味管理检查表", "offline"),
     ("现场检查明细表", "online"),
     ("现场检查明细表", "offline"),
 ]
@@ -911,7 +910,7 @@ PERMISSION_CATALOG = [
         "key": "view_my_review_issues",
         "name": "查看页面",
         "category": "我的待复核问题",
-        "description": "督导组查看全部待复核问题；五类处室仅查看本部门检查表。部门范围固定，含历史版本，不受问题列表范围设置影响。",
+        "description": "督导中心视角不参与发展计划部、油气事业部及财务部所属检查表的复核；五类处室仅查看本部门检查表，Root仍可查看全部。范围包含历史版本。",
         "defaults": {"root": True, "supervisor": True, "quality_safety": True},
     },
     {
@@ -6402,21 +6401,32 @@ def can_view_review_queue(cur, user):
                 and has_permission(cur, user, "view_my_review_issues"))
 
 
-def review_queue_scope(cur, user):
-    """Hard departmental boundary, independent of configurable issue-list scopes."""
+def review_queue_table_ids(cur, user):
+    """None is root-only unrestricted access; all business roles use fixed IDs."""
     if has_role_default_checklist_scope(user):
-        return "i.inspection_table_id = ANY(%s)", [
-            get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True)
-        ]
-    return "TRUE", []
+        return get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True)
+    if is_supervisor_role(user.get("role")):
+        delegated = {
+            (normalize_checklist_scope_name(name), mode)
+            for role in ("development_plan", "oil_gas", "finance")
+            for name, mode in ROLE_DEFAULT_CHECKLIST_SCOPES[role]
+        }
+        cur.execute("SELECT id,table_name,checklist_mode FROM inspection_tables ORDER BY id")
+        return [row["id"] for row in cur.fetchall()
+                if (normalize_checklist_scope_name(row["table_name"]),
+                    normalize_checklist_mode(row.get("checklist_mode"))) not in delegated]
+    return None if is_root_user(user) else []
+
+
+def review_queue_scope(cur, user):
+    """Same fixed perspective for list, facets, badges and review submission."""
+    ids = review_queue_table_ids(cur, user)
+    return ("TRUE", []) if ids is None else ("i.inspection_table_id = ANY(%s)", [ids])
 
 
 def issue_in_review_queue_scope(cur, user, issue):
-    if has_role_default_checklist_scope(user):
-        return issue.get("inspection_table_id") in get_role_default_inspection_table_ids(
-            cur, user["role"], include_inactive=True
-        )
-    return is_supervisor_like(user)
+    ids = review_queue_table_ids(cur, user)
+    return ids is None or issue.get("inspection_table_id") in ids
 
 
 def can_edit_inspection_issues(cur, user):
@@ -26347,9 +26357,10 @@ def get_pending_review_filter_options():
         options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
                    for key in ('regions', 'stations', 'inspectors', 'inspection_tables')}
         scope_tables = []
-        if has_role_default_checklist_scope(user):
+        scope_ids = review_queue_table_ids(cur, user)
+        if scope_ids is not None:
             cur.execute("SELECT id,table_name,is_active FROM inspection_tables WHERE id=ANY(%s) ORDER BY id",
-                        (get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True),))
+                        (scope_ids,))
             scope_tables = [dict(table) for table in cur.fetchall()]
         return jsonify(success=True, filter_options=options, scope_tables=scope_tables)
     except Exception:
@@ -33882,7 +33893,7 @@ def submit_review(issue_id):
             return jsonify({"success": False, "error": "问题不存在。"}), 404
 
         if not issue_in_review_queue_scope(cur, user, issue):
-            return jsonify(success=False, error="只能复核本部门所属检查表的问题。"), 403
+            return jsonify(success=False, error="该检查表不在当前复核视角范围内，请由对应处室部门复核。"), 403
 
         if is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "该问题已被审核否决，不再参与复核流转。"}), 400

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { canAccessIssueQueue, canSubmitIssueQueue, legacyIssueQueuePath, issueQueuePaths, departmentReviewRoles } from '../src/utils/issueQueueAccess.js'
+import { canAccessIssueQueue, canSubmitIssueQueue, legacyIssueQueuePath, issueQueuePaths, departmentReviewRoles, reviewQueuePerspective } from '../src/utils/issueQueueAccess.js'
 
 test('rectification and review have separate routes, views and actions', () => {
   const station = { view_my_rectification_issues: true }
@@ -38,4 +38,12 @@ test('actual router guards separately enforce each queue, including direct URL a
   assert.equal(access(issueQueuePaths.rectification, 'station_manager', { view_my_rectification_issues: true }), true)
   assert.equal(access(issueQueuePaths.review, 'station_manager', { view_my_rectification_issues: true }), false)
   assert.equal(access(issueQueuePaths.rectification, 'station_manager', { submit_my_rectification: true }), false)
+})
+
+test('supervisor roles share a supervision-center perspective, with distinct department perspectives', () => {
+  assert.equal(reviewQueuePerspective('supervisor'), '督导中心视角')
+  assert.equal(reviewQueuePerspective('supervisor_manager'), '督导中心视角')
+  assert.equal(reviewQueuePerspective('quality_safety'), '质安部视角')
+  assert.equal(reviewQueuePerspective('oil_gas'), '油气事业部视角')
+  assert.equal(reviewQueuePerspective('root'), '全部待复核')
 })
