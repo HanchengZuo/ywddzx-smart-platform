@@ -19,7 +19,7 @@
         <div class="summary-value summary-value-small">
           {{ queueScopeLabel }}
         </div>
-        <div v-if="departmentQueue && scopeTables.length" class="scope-checklists" aria-label="本部门检查表">
+        <div v-if="isReviewQueue && scopeTables.length" class="scope-checklists" aria-label="当前复核视角检查表">
           <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
         </div>
         <div class="summary-desc">
@@ -643,7 +643,7 @@
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
 import { useRouter } from 'vue-router'
-import { canSubmitIssueQueue, departmentReviewRoles } from '@/utils/issueQueueAccess.js'
+import { canSubmitIssueQueue, reviewQueuePerspective } from '@/utils/issueQueueAccess.js'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
@@ -698,8 +698,7 @@ const currentRole = computed(() => props.queue === 'rectification' ? 'station_ma
 let queuePermissions = {}
 try { queuePermissions = JSON.parse(localStorage.getItem('permissions') || '{}') } catch { /* Server remains authoritative. */ }
 const canSubmitQueue = computed(() => canSubmitIssueQueue(accountRole, queuePermissions, props.queue))
-const departmentQueue = computed(() => props.queue === 'review' && departmentReviewRoles.includes(accountRole))
-const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : departmentQueue.value ? '本部门检查表' : '全部待复核')
+const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : reviewQueuePerspective(accountRole))
 const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
 const myIssuesEmptyDescription = computed(() => (
   currentRole.value === 'station_manager'

@@ -47,6 +47,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 stack.enter_context(api.app.test_request_context('/api/my-issues?page=999&page_size=5&keyword=接地'))
                 stack.enter_context(patch('app.get_authenticated_request_user_id', return_value=7))
                 stack.enter_context(patch('app.has_permission', side_effect=lambda _, user, key: api.role_default_permission(user['role'], key)))
+                stack.enter_context(patch('app.review_queue_table_ids',return_value=None))
                 conn = MagicMock(); cur = conn.cursor.return_value
                 cur.fetchone.side_effect = [{'id': 7, 'role': role}, {'total': 11}]
                 cur.fetchall.return_value = [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}]
@@ -80,7 +81,8 @@ class PendingReviewPaginationTests(unittest.TestCase):
             'app.get_authenticated_request_user_id', return_value=7
         ), patch('app.get_db_connection', return_value=conn):
             with patch('app.has_permission', side_effect=lambda _, user, key: api.role_default_permission(user['role'], key)):
-                response, status = api.get_my_issues()
+                with patch('app.review_queue_table_ids',return_value=None):
+                    response, status = api.get_my_issues()
         self.assertEqual(status, 400)
         self.assertIn('关键词搜索最多输入1000个字符', response.get_json()['error'])
         self.assertEqual(conn.cursor.return_value.execute.call_count, 1)
@@ -97,7 +99,8 @@ class PendingReviewPaginationTests(unittest.TestCase):
             'app.get_current_request_user', return_value={'id': 1, 'role': 'supervisor'}
         ), patch('app.fetch_internal_standard_tags_by_codes', return_value={}):
             with patch('app.has_permission', return_value=True):
-                result = api.get_pending_review_filter_options().get_json()
+                with patch('app.review_queue_table_ids',return_value=None):
+                    result = api.get_pending_review_filter_options().get_json()
         self.assertEqual(result['filter_options']['stations'], ['第一页以外的站点'])
         self.assertNotIn('LIMIT', cur.execute.call_args.args[0])
 
