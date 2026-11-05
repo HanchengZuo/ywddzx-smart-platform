@@ -91,10 +91,11 @@
             </div>
             <div class="mobile-card-row"><span>整改时间</span><strong>{{ item.rectification_at || '暂无' }}</strong></div>
             <div class="mobile-card-row mobile-card-row-top">
-              <span>复核说明</span>
+              <span>问题复核说明</span>
               <div class="mobile-card-text">{{ item.review_note || '暂无' }}</div>
             </div>
-            <div class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at || '暂无' }}</strong></div>
+            <div class="mobile-card-row"><span>问题复核人员</span><strong>{{ item.reviewer || '暂无' }}</strong></div>
+            <div class="mobile-card-row"><span>问题复核时间</span><strong>{{ item.review_at || '暂无' }}</strong></div>
           </div>
 
           <div class="mobile-card-images">
@@ -114,11 +115,11 @@
               <span>整改照片</span>
             </button>
             <button v-if="item.review_photo" class="mobile-image-btn" type="button"
-              @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-              <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片"
+              @click="preview(resolveImage(item.review_photo), '问题复核照片')">
+              <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="问题复核照片"
                 loading="lazy" decoding="async" fetchpriority="low" />
-              <span v-else class="mobile-thumb-placeholder">复核照片</span>
-              <span>复核照片</span>
+              <span v-else class="mobile-thumb-placeholder">问题复核照片</span>
+              <span>问题复核照片</span>
             </button>
           </div>
 
@@ -405,7 +406,7 @@
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('reviewResult')">
-          <label>督导组复核结果</label>
+          <label>问题复核结果</label>
           <select v-model="filters.reviewResult">
             <option value="">全部</option>
             <option value="整改通过">整改通过</option>
@@ -574,10 +575,11 @@
                 <th v-if="isIssueColumnVisible('rectification_note')" class="nowrap">站点反馈整改说明</th>
                 <th v-if="isIssueColumnVisible('rectification_at')" class="nowrap">整改时间</th>
                 <th v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">站点反馈整改照片</th>
-                <th v-if="isIssueColumnVisible('review_result')" class="nowrap">督导组复核结果</th>
-                <th v-if="isIssueColumnVisible('review_note')" class="nowrap">督导组复核说明</th>
-                <th v-if="isIssueColumnVisible('review_at')" class="nowrap">复核时间</th>
-                <th v-if="isIssueColumnVisible('review_photo')" class="nowrap">督导组复核照片</th>
+                <th v-if="isIssueColumnVisible('review_result')" class="nowrap">问题复核结果</th>
+                <th v-if="isIssueColumnVisible('review_note')" class="nowrap">问题复核说明</th>
+                <th v-if="isIssueColumnVisible('reviewer')" class="nowrap">问题复核人员</th>
+                <th v-if="isIssueColumnVisible('review_at')" class="nowrap">问题复核时间</th>
+                <th v-if="isIssueColumnVisible('review_photo')" class="nowrap">问题复核照片</th>
                 <th v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">问题状态</th>
                 <th v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">审核</th>
                 <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
@@ -645,13 +647,14 @@
                 </td>
                 <td v-if="isIssueColumnVisible('review_result')" class="nowrap">{{ item.review_result || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('review_note')" class="nowrap">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('reviewer')" class="nowrap">{{ item.reviewer || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('review_at')" class="nowrap">{{ item.review_at || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('review_photo')" class="nowrap">
                   <button v-if="item.review_photo" class="image-btn" type="button"
-                    @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-                    <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片"
+                    @click="preview(resolveImage(item.review_photo), '问题复核照片')">
+                    <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="thumb" alt="问题复核照片"
                       loading="lazy" decoding="async" fetchpriority="low" />
-                    <span v-else class="thumb-placeholder">复核照片</span>
+                    <span v-else class="thumb-placeholder">问题复核照片</span>
                   </button>
                   <span v-else>暂无</span>
                 </td>
@@ -1131,15 +1134,15 @@
               <textarea v-model="editDialog.form.rectification_note" rows="3" placeholder="可补充或修正站点整改说明"></textarea>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
-              <span>督导组复核结果</span>
+              <span>问题复核结果</span>
               <select v-model="editDialog.form.review_result">
                 <option value="">暂无/清空</option>
                 <option v-for="result in reviewOptionsFor(editDialog.form.rectification_result)" :key="result" :value="result">{{ result }}</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
-              <span>督导组复核说明</span>
-              <textarea v-model="editDialog.form.review_note" rows="3" placeholder="可补充或修正督导组复核说明"></textarea>
+              <span>问题复核说明</span>
+              <textarea v-model="editDialog.form.review_note" rows="3" placeholder="可补充或修正问题复核说明"></textarea>
             </label>
           </div>
           <div v-if="!canEditDialogIssueContent && canChangeDialogIssueInspector" class="issue-edit-hint">
@@ -1395,7 +1398,7 @@ const filterSummaryFields = computed(() => buildFilterSummary(
     ['standardTags', '规范标签'],
     ['issueDescription', '问题描述'],
     ['rectificationResult', '站点整改结果'],
-    ['reviewResult', '督导组复核结果'],
+    ['reviewResult', '问题复核结果'],
     ['status', '问题状态'],
     ['excellent', '优秀问题'],
     ['auditState', '审核状态'],
@@ -1522,10 +1525,11 @@ const issueColumnDefinitions = [
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核', width: 210 },
   { key: 'rectification_at', label: '整改时间', group: '整改复核', width: 148 },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核', width: 120 },
-  { key: 'review_result', label: '督导组复核结果', group: '整改复核', width: 136 },
-  { key: 'review_note', label: '督导组复核说明', group: '整改复核', width: 210 },
-  { key: 'review_at', label: '复核时间', group: '整改复核', width: 148 },
-  { key: 'review_photo', label: '督导组复核照片', group: '整改复核', width: 120 },
+  { key: 'review_result', label: '问题复核结果', group: '整改复核', width: 136 },
+  { key: 'review_note', label: '问题复核说明', group: '整改复核', width: 210 },
+  { key: 'reviewer', label: '问题复核人员', group: '整改复核', width: 190 },
+  { key: 'review_at', label: '问题复核时间', group: '整改复核', width: 148 },
+  { key: 'review_photo', label: '问题复核照片', group: '整改复核', width: 120 },
   { key: 'status', label: '问题状态', group: '状态操作', width: 104 },
   { key: 'audit', label: '审核', group: '状态操作', width: 116 },
   { key: 'excellent', label: '优秀', group: '状态操作', width: 78 }
@@ -1682,10 +1686,11 @@ const exportFieldGroups = [
       { key: 'rectification_note', label: '整改说明', help: '站点反馈整改说明' },
       { key: 'rectification_at', label: '整改时间', help: '站点提交整改的时间' },
       { key: 'rectification_photo', label: '整改照片', help: '嵌入站点整改照片', photo: true },
-      { key: 'review_result', label: '复核结果', help: '督导组复核判定' },
-      { key: 'review_note', label: '复核说明', help: '督导组复核说明' },
-      { key: 'review_at', label: '复核时间', help: '督导组提交复核的时间' },
-      { key: 'review_photo', label: '复核照片', help: '嵌入督导复核照片', photo: true }
+      { key: 'review_result', label: '问题复核结果', help: '问题复核判定' },
+      { key: 'review_note', label: '问题复核说明', help: '问题复核说明' },
+      { key: 'reviewer', label: '问题复核人员', help: '实际复核时的部门与人员，历史未记录时不推测补填' },
+      { key: 'review_at', label: '问题复核时间', help: '提交问题复核的时间' },
+      { key: 'review_photo', label: '问题复核照片', help: '嵌入问题复核照片', photo: true }
     ]
   }
 ]

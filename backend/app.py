@@ -2,6 +2,7 @@ from flask import Flask, abort, g, has_request_context, jsonify, request, send_f
 from flask_cors import CORS
 from frontend_version import development_frontend_version
 from roles import PRIVILEGED_ROLES, is_supervisor_role
+from issue_review_identity import actor_department, attach_reviewers
 from user_permission_config import merge_personal_permissions, replace_personal_permissions
 from driving_permits import permit_value, save_user_permit
 from upload_request import PlatformRequest
@@ -6477,7 +6478,7 @@ def resolve_issue_review_transition(value, rectification_result=None, checklist_
     if review_result == "已整改":
         review_result = "整改通过"
     if review_result not in ISSUE_REVIEW_RESULT_OPTIONS:
-        raise ValueError("请选择有效的督导组复核结果。")
+        raise ValueError("请选择有效的问题复核结果。")
     if rectification_result is not None:
         if canonical_issue_result(rectification_result) not in ISSUE_RESULT_OPTIONS:
             raise ValueError("站点尚未提交有效整改结果，不能进行复核。")
@@ -6985,6 +6986,7 @@ ISSUE_EXPORT_FIELD_KEYS = {
     "rectification_photo",
     "review_result",
     "review_note",
+    "reviewer",
     "review_at",
     "review_photo",
     "status",
@@ -7245,10 +7247,11 @@ ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("站点反馈整改说明", "rectification_note"),
     ("整改时间", "rectification_at"),
     ("站点反馈整改照片", "rectification_photo"),
-    ("督导组复核结果", "review_result"),
-    ("督导组复核说明", "review_note"),
-    ("复核时间", "review_at"),
-    ("督导组复核照片", "review_photo"),
+    ("问题复核结果", "review_result"),
+    ("问题复核说明", "review_note"),
+    ("问题复核人员", "reviewer"),
+    ("问题复核时间", "review_at"),
+    ("问题复核照片", "review_photo"),
     ("问题状态", "status"),
 ]
 
@@ -16660,6 +16663,7 @@ def fetch_internal_standard_tags_by_codes(cur, internal_standard_ids):
 def attach_internal_standard_tags_to_issue_rows(cur, rows):
     if not rows:
         return rows
+    attach_reviewers(cur, rows, ROLE_LABELS)
     checklist_editions.attach_rows(cur, rows)
     tag_map = fetch_internal_standard_tags_by_codes(
         cur,
@@ -24469,6 +24473,7 @@ def get_station_map_issues(station_id):
             [*base_params, page_size, offset],
         )
         items = cur.fetchall()
+        attach_reviewers(cur, items, ROLE_LABELS)
         return jsonify(
             {
                 "success": True,
@@ -30681,7 +30686,7 @@ def update_issue(issue_id):
         )
         review_result = normalize_optional_issue_result(
             data.get("review_result"),
-            "督导组复核结果",
+            "问题复核结果",
             ISSUE_REVIEW_RESULT_OPTIONS,
         )
         if review_result:
@@ -33448,6 +33453,7 @@ def get_inspection_issues(inspection_id):
             )
             for row in cur.fetchall()
         ]
+        attach_reviewers(cur, issues, ROLE_LABELS)
 
         return jsonify(
             {
@@ -33518,10 +33524,10 @@ def serialize_issue_flow_history_event(row):
         }[action_type]
     elif action_type == "rectification_submitted":
         action_label = "站经理提交整改"
-    elif result in {"整改不通过", "驳回站级无法整改"}:
-        action_label = "督导复核退回整改"
+    elif action_type == 'review_submitted':
+        action_label = "问题复核退回整改" if result in {"整改不通过", "驳回站级无法整改"} else "提交问题复核"
     else:
-        action_label = "督导组提交复核"
+        action_label = "问题流转"
     event["action_label"] = action_label
     event["result"] = result or None
     if action_type not in {"rectification_submitted", "review_submitted"}:
@@ -33531,6 +33537,7 @@ def serialize_issue_flow_history_event(row):
         or str(event.get("actor_username") or "").strip()
         or "历史数据"
     )
+    event['actor_department'] = actor_department(event.get('actor_role'), ROLE_LABELS)
     event["note"] = str(event.get("note") or "").strip()
     if action_type == "inspection_reset" or (action_type == "inspection_completed" and "待检查人确认" in str(event.get("to_status") or "")):
         event["action_label"] = "重置巡检记录"
@@ -33542,8 +33549,6 @@ def serialize_issue_flow_history_event(row):
         event["action_label"] = "通过站级无法整改申请"
     elif action_type == "review_submitted" and result == "驳回站级无法整改":
         event["action_label"] = "驳回站级无法整改申请"
-    if action_type == "review_submitted" and event.get("actor_role") in ROLE_DEFAULT_CHECKLIST_SCOPES:
-        event["action_label"] = ROLE_LABELS[event["actor_role"]].removesuffix("账号") + "提交复核"
     if action_type == "audit_changed" and event["note"].startswith("自动审核"):
         event["action_label"] = "自动审核"
         event["actor_display_name"] = "系统自动审核"
@@ -33840,7 +33845,7 @@ def submit_review(issue_id):
         return jsonify({"success": False, "error": "缺少用户信息。"}), 400
 
     if not review_result:
-        return jsonify({"success": False, "error": "请选择督导组复核结果。"}), 400
+        return jsonify({"success": False, "error": "请选择问题复核结果。"}), 400
 
     try:
         transition = resolve_issue_review_transition(review_result)

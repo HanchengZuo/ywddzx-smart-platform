@@ -23,7 +23,7 @@
           <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
         </div>
         <div class="summary-desc">
-          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，复核说明选填，照片要求随结论变化' : '仅可查看，提交处理权限尚未开启' }}
+          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，问题复核说明选填，照片要求随结论变化' : '仅可查看，提交处理权限尚未开启' }}
         </div>
       </div>
 
@@ -202,7 +202,10 @@
               </div>
               <div class="mobile-card-row"><span>整改时间</span><div class="mobile-card-value">{{ item.rectification_at || '暂无' }}</div></div>
             </template>
-            <div v-if="item.review_at" class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at }}</strong></div>
+            <template v-if="item.review_at">
+              <div class="mobile-card-row"><span>问题复核人员</span><strong>{{ item.reviewer || '历史未记录' }}</strong></div>
+              <div class="mobile-card-row"><span>问题复核时间</span><strong>{{ item.review_at }}</strong></div>
+            </template>
           </div>
 
           <button v-if="!isReturnedForRectification(item)" class="status-flow-link" type="button" @click="openFlowDialog(item)">查看流转</button>
@@ -219,9 +222,9 @@
             </button>
 
             <button v-if="isReviewQueue && item.review_photo" class="mobile-image-btn" type="button"
-              @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-              <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
-              <span>复核照片</span>
+              @click="preview(resolveImage(item.review_photo), '问题复核照片')">
+              <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="问题复核照片" />
+              <span>问题复核照片</span>
             </button>
           </div>
 
@@ -327,10 +330,11 @@
                 <th v-if="isMyIssueColumnVisible('rectification_note')">站点反馈整改说明</th>
                 <th v-if="isMyIssueColumnVisible('rectification_at')">整改时间</th>
                 <th v-if="isMyIssueColumnVisible('rectification_photo')">站点反馈整改照片</th>
-                <th v-if="isMyIssueColumnVisible('review_result')">督导组复核结果</th>
-                <th v-if="isMyIssueColumnVisible('review_note')">督导组复核说明</th>
-                <th v-if="isMyIssueColumnVisible('review_at')">复核时间</th>
-                <th v-if="isMyIssueColumnVisible('review_photo')">督导组复核照片</th>
+                <th v-if="isMyIssueColumnVisible('review_result')">问题复核结果</th>
+                <th v-if="isMyIssueColumnVisible('review_note')">问题复核说明</th>
+                <th v-if="isMyIssueColumnVisible('reviewer')">问题复核人员</th>
+                <th v-if="isMyIssueColumnVisible('review_at')">问题复核时间</th>
+                <th v-if="isMyIssueColumnVisible('review_photo')">问题复核照片</th>
                 <th v-if="isMyIssueColumnVisible('status')" class="nowrap-col">问题状态</th>
                 <th v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">操作</th>
               </tr>
@@ -375,11 +379,12 @@
                 </td>
                 <td v-if="isMyIssueColumnVisible('review_result')">{{ item.review_result || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('review_note')" class="long-text">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('reviewer')" class="nowrap-col">{{ item.reviewer || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('review_at')" class="nowrap-col">{{ item.review_at || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('review_photo')">
                   <button v-if="item.review_photo" class="image-btn" type="button"
-                    @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-                    <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
+                    @click="preview(resolveImage(item.review_photo), '问题复核照片')">
+                    <img :src="resolveImage(item.review_photo)" class="thumb" alt="问题复核照片" />
                   </button>
                   <span v-else>暂无</span>
                 </td>
@@ -557,14 +562,14 @@
               </div>
             </div>
             <div v-else class="drawer-photo-skip-note">
-              已选择站级无法整改，无需上传整改照片，提交后等待督导组复核。
+              已选择站级无法整改，无需上传整改照片，提交后等待问题复核。
             </div>
 
           </template>
 
           <template v-else>
             <div class="form-item">
-              <label>复核结果</label>
+              <label>问题复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
                 <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
@@ -572,10 +577,10 @@
             </div>
 
             <div class="form-item">
-              <label>复核说明 <span class="optional-field-tag">选填</span></label>
+              <label>问题复核说明 <span class="optional-field-tag">选填</span></label>
               <textarea v-model="actionForm.reviewNote" rows="4"
                 placeholder="可填写复核依据或退回原因，不填写也可以提交"></textarea>
-              <div class="field-help-text">复核说明允许为空；选择整改不通过时，建议写明需要重新整改的原因。</div>
+              <div class="field-help-text">问题复核说明允许为空；选择整改不通过时，建议写明需要重新整改的原因。</div>
             </div>
 
             <div v-if="reviewOutcomeHint" class="review-outcome-hint" :class="reviewOutcomeHint.type">
@@ -584,9 +589,9 @@
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
-              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode, actionDrawer.item?.rectification_result)" class="optional-field-tag">选填</span></label>
+              <label>问题复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode, actionDrawer.item?.rectification_result)" class="optional-field-tag">选填</span></label>
               <InspectionPhotoUpload ref="reviewPhotoUploadRef" v-model="actionForm.reviewPhotoFile" id-prefix="review-photo"
-                label="复核照片" :disabled="submittingAction"
+                label="问题复核照片" :disabled="submittingAction"
                 :active="actionDrawer.visible && !previewState.visible && !standardDetailState.visible"
                 @notify="showActionToast" @busy-change="reviewPhotoProcessing = $event" />
             </div>
@@ -717,7 +722,7 @@ const returnTitle = (item) => item?.appeal_rejected
   : '上一轮整改未通过复核'
 const returnTime = (item) => `退回时间：${(item?.appeal_rejected ? item.appeal_rejected_at : item?.review_at) || '未记录'}`
 const reviewReturnReason = (item) => String((item?.appeal_rejected ? item.appeal_rejection_reason : item?.review_note) || '').trim()
-  || (item?.appeal_rejected ? '申诉驳回原因暂未读取到，请查看问题流转记录并继续整改。' : '督导组未填写复核说明，请重新核对问题并提交整改。')
+  || (item?.appeal_rejected ? '申诉驳回原因暂未读取到，请查看问题流转记录并继续整改。' : '复核人员未填写问题复核说明，请重新核对问题并提交整改。')
 const issueStatusLabel = (item) => item?.appeal_rejected ? '申诉驳回 · 待整改' : isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
 const issueStatusClass = (item) => isReturnedForRectification(item) ? 'status-tag returned' : statusClass(item?.status)
 const returnNotices = computed(() => rectificationReturnNotices(issues.value))
@@ -793,10 +798,11 @@ const myIssueColumnDefinitions = [
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核' },
   { key: 'rectification_at', label: '整改时间', group: '整改复核' },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核' },
-  { key: 'review_result', label: '督导组复核结果', group: '整改复核' },
-  { key: 'review_note', label: '督导组复核说明', group: '整改复核' },
-  { key: 'review_at', label: '复核时间', group: '整改复核' },
-  { key: 'review_photo', label: '督导组复核照片', group: '整改复核' },
+  { key: 'review_result', label: '问题复核结果', group: '整改复核' },
+  { key: 'review_note', label: '问题复核说明', group: '整改复核' },
+  { key: 'reviewer', label: '问题复核人员', group: '整改复核' },
+  { key: 'review_at', label: '问题复核时间', group: '整改复核' },
+  { key: 'review_photo', label: '问题复核照片', group: '整改复核' },
   { key: 'status', label: '问题状态', group: '状态操作' },
   { key: 'action', label: '操作', group: '状态操作' }
 ]
@@ -1159,8 +1165,8 @@ const skipsIssuePhotoUpload = value => isUnableRectification(value) || isReviewR
 const shouldShowRectificationPhotoUpload = computed(() => !isUnableRectification(actionForm.value.rectificationResult))
 const shouldShowReviewPhotoUpload = computed(() => reviewAllowsPhoto(actionForm.value.reviewResult))
 const reviewPhotoSkipMessage = computed(() => {
-  if (isUnableRectification(actionDrawer.value.item?.rectification_result)) return '站级无法整改申请复核无需上传照片，复核说明选填。'
-  return '选择复核结果后，系统会根据结果提示是否需要上传照片。'
+  if (isUnableRectification(actionDrawer.value.item?.rectification_result)) return '站级无法整改申请复核无需上传照片，问题复核说明选填。'
+  return '选择问题复核结果后，系统会根据结果提示是否需要上传照片。'
 })
 const reviewOutcomeHint = computed(() => {
   if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。' }
@@ -1168,7 +1174,7 @@ const reviewOutcomeHint = computed(() => {
     return {
       type: 'returned',
       title: '将退回站经理重新整改',
-      description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。' + (reviewAllowsPhoto(actionForm.value.reviewResult) ? '复核照片选填，可用于说明退回原因。' : '')
+      description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。' + (reviewAllowsPhoto(actionForm.value.reviewResult) ? '问题复核照片选填，可用于说明退回原因。' : '')
     }
   }
   if (actionForm.value.reviewResult === '整改通过') {
@@ -1176,8 +1182,8 @@ const reviewOutcomeHint = computed(() => {
       type: 'closed',
       title: '将完成问题闭环',
       description: reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
-        ? '确认整改有效后，请上传能够反映复核结果的照片。'
-        : '本次复核照片为选填，可不上传；提交后问题将变为已闭环。'
+        ? '确认整改有效后，请上传能够反映问题复核结果的照片。'
+        : '本次问题复核照片为选填，可不上传；提交后问题将变为已闭环。'
     }
   }
 
@@ -1459,12 +1465,12 @@ const submitAction = async () => {
     }
 
     if (!actionForm.value.reviewResult) {
-      showActionToast('请选择复核结果。', 'error')
+      showActionToast('请选择问题复核结果。', 'error')
       return
     }
     const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
     if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
-      showActionToast('请上传复核照片。', 'error')
+      showActionToast('请上传问题复核照片。', 'error')
       return
     }
 

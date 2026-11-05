@@ -227,9 +227,10 @@
                   <div><dt>审核来源</dt><dd>{{ item.audit_source === 'automatic' ? '自动审核' : item.audit_source ? '人工审核' : '暂无' }}</dd></div>
                   <div><dt>审核人</dt><dd>{{ item.audited_by_name || '暂无' }}</dd></div>
                   <div><dt>审核时间</dt><dd>{{ item.audited_at || '暂无' }}</dd></div>
-                  <div><dt>复核结果</dt><dd>{{ item.review_result || '暂无' }}</dd></div>
-                  <div><dt>复核时间</dt><dd>{{ item.review_at || '暂无' }}</dd></div>
-                  <div class="wide"><dt>复核说明</dt><dd>{{ item.review_note || '暂无复核说明' }}</dd></div>
+                  <div><dt>问题复核结果</dt><dd>{{ item.review_result || '暂无' }}</dd></div>
+                  <div><dt>问题复核人员</dt><dd>{{ item.reviewer || '暂无' }}</dd></div>
+                  <div><dt>问题复核时间</dt><dd>{{ item.review_at || '暂无' }}</dd></div>
+                  <div class="wide"><dt>问题复核说明</dt><dd>{{ item.review_note || '暂无问题复核说明' }}</dd></div>
                 </template>
               </dl>
             </div>
@@ -244,7 +245,7 @@
               <button v-if="showReviewIssueFields && item.rectification_photo" class="station-issue-photo-link" type="button"
                 @click="openImagePreview(item.rectification_photo, `问题 #${item.id} 整改照片`)">查看整改照片</button>
               <button v-if="showFullIssueFields && item.review_photo" class="station-issue-photo-link" type="button"
-                @click="openImagePreview(item.review_photo, `问题 #${item.id} 复核照片`)">查看复核照片</button>
+                @click="openImagePreview(item.review_photo, `问题 #${item.id} 问题复核照片`)">查看问题复核照片</button>
             </div>
           </article>
         </div>

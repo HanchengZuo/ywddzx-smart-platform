@@ -26,7 +26,7 @@ export const rectificationReturnNotices = items => {
     {
       kind: 'review', count: counts.review, label: '复核退回提醒',
       title: `有 ${counts.review} 条问题复核未通过，需要重新整改`,
-      description: '督导组未通过上一轮整改或站级无法整改申请的复核。请先查看复核退回原因和问题流转记录，再重新提交整改。'
+      description: '复核人员未通过上一轮整改或站级无法整改申请的复核。请先查看复核退回原因和问题流转记录，再重新提交整改。'
     }
   ].filter(notice => notice.count > 0)
 }

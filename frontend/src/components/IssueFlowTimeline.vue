@@ -9,7 +9,7 @@
         <div class="event-top"><span class="stage-pill">{{ event.stage_label || '巡检流程' }}</span><time>{{ event.created_at || '时间未记录' }}</time></div>
         <div class="flow-event-heading"><strong>{{ event.action_label }}</strong></div>
         <p v-if="event.result && event.result !== event.action_label" class="event-result">处理结果：{{ rectificationResultLabel(event.result) }}</p>
-        <div class="flow-event-meta">操作人：{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮整改复核</span></div>
+        <div class="flow-event-meta"><span v-if="event.actor_department" class="actor-department">{{ event.actor_department }}</span>{{ event.action_type === 'review_submitted' ? '问题复核人员' : '操作人' }}：{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮整改复核</span></div>
         <div v-if="event.from_label || event.from_status" class="status-path"><span>{{ event.from_label || event.from_status }}</span><b>→</b><strong>{{ event.to_label || event.to_status }}</strong></div>
         <p v-if="event.note" class="event-note"><span>处理说明</span>{{ event.note }}</p>
         <p v-if="event.history_notice" class="history-notice">{{ event.history_notice }}</p>
@@ -41,6 +41,7 @@ li.returned { --event-color: #c7463f; border-color: #f1ceca; } li.success { --ev
 .event-note { padding: 10px 12px; background: #f7f9fc; border-radius: 8px; font-size: 14px; }.event-note > span { display: block; color: #718096; font-size: 11px; margin-bottom: 4px; }.history-notice { color: #9a642c; font-size: 12px; }
 .flow-event-heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .flow-event-meta { margin-top: 8px; }
+.actor-department { display: inline-block; margin-right: 8px; padding: 2px 7px; border-radius: 5px; color: #245973; background: #edf5f8; font-weight: 600; }
 p { line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; margin: 8px 0; }
 .flow-photo-thumb { display: block; width: 180px; max-width: 100%; height: 128px; padding: 4px; margin-top: 12px; background: #f6f9fd; border: 1px solid #dce6f1; border-radius: 10px; cursor: zoom-in; }
 .flow-photo-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }

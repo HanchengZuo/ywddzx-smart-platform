@@ -46,7 +46,7 @@ def fingerprint(rows, options, table_fields, resolve_photo):
         digest.update(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str,
                                  separators=(',', ':')).encode('utf-8'))
         digest.update(b'\n')
-    add({'renderer': 'issues-xlsx-v13.1.1', 'options': options,
+    add({'renderer': 'issues-xlsx-v13.1.3', 'options': options,
          'tables': {str(key): value for key, value in table_fields.items()}})
     photo_keys = [key for key, enabled in options.get('include_photos', {}).items() if enabled]
     for row in sorted(rows, key=lambda item: int(item['id']), reverse=True):

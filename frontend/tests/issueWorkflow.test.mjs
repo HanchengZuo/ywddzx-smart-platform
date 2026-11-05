@@ -37,7 +37,8 @@ test('review rejection and appeal rejection have separate counts without double 
       { kind: 'review', count: 2 },
     ],
   )
-  assert.match(notices[1].description, /督导组/)
+  assert.match(notices[1].description, /复核人员/)
+  assert.doesNotMatch(notices[1].description, /督导组/)
 })
 
 test('review-only and no-return lists show only applicable notices', () => {

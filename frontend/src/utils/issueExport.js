@@ -6,7 +6,7 @@ const labels = {
   inspectionTableName: '检查表', inspection_tables: '检查表', inspection_table_name: '检查表',
   standardId: '外部规范ID', standard_id: '外部规范ID', standardDetail: '规范详情', standard_detail: '规范详情',
   standardTags: '规范标签', standard_tags: '规范标签', issueDescription: '问题描述', issue_description: '问题描述',
-  rectificationResult: '站点整改结果', rectification_result: '站点整改结果', reviewResult: '督导组复核结果', review_result: '督导组复核结果',
+  rectificationResult: '站点整改结果', rectification_result: '站点整改结果', reviewResult: '问题复核结果', review_result: '问题复核结果',
   status: '问题状态', excellent: '优秀问题', auditStatus: '审核结论', audit_status: '审核结论',
   auditState: '审核状态', audit_state: '审核状态', description_match: '关键词匹配方式',
 }

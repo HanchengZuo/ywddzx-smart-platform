@@ -73,12 +73,12 @@ test('approval and rejection share one uploader, editor and submit path with sep
   )
   assert.match(source, /if \(!reviewAllowsPhoto\(value\)\) \{\s+clearReviewFile\(\)/)
   assert.equal((source.match(/id-prefix="review-photo"/g) || []).length, 1)
-  assert.equal((source.match(/label="复核照片"/g) || []).length, 1)
+  assert.equal((source.match(/label="问题复核照片"/g) || []).length, 1)
   assert.match(
     source,
     /复核照片 <span v-if="!reviewRequiresPhoto\(actionForm.reviewResult, actionDrawer.item\?\.checklist_mode, actionDrawer.item\?\.rectification_result\)" class="optional-field-tag">选填/,
   )
   assert.match(source, /reviewPhotoRequired = reviewRequiresPhoto\(actionForm.value.reviewResult, actionDrawer.value.item\?\.checklist_mode, actionDrawer.value.item\?\.rectification_result\)/)
-  assert.match(source, /本次复核照片为选填，可不上传/)
+  assert.match(source, /本次问题复核照片为选填，可不上传/)
   assert.ok(!source.includes('整改不通过将退回站经理重新整改，本次无需上传复核照片。'))
 })
