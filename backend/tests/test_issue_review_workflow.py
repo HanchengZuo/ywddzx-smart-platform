@@ -20,8 +20,8 @@ class IssueReviewWorkflowTests(unittest.TestCase):
         self.assertEqual(rejected['new_status'], '待整改')
         self.assertFalse(approved['photo_required'])
         self.assertFalse(rejected['photo_required'])
-        self.assertFalse(approved['photo_allowed'])
-        self.assertFalse(rejected['photo_allowed'])
+        self.assertTrue(approved['photo_allowed'])
+        self.assertTrue(rejected['photo_allowed'])
         self.assertTrue(rejected['returns_to_station'])
 
     def test_cross_branch_reviews_are_rejected(self):
@@ -39,11 +39,11 @@ class IssueReviewWorkflowTests(unittest.TestCase):
     def test_legacy_ordinary_approval_is_compatible(self):
         self.assertEqual(resolve_issue_review_transition('已整改', '已整改')['review_result'], '整改通过')
 
-    def test_rectified_review_closes_issue_and_requires_photo(self):
+    def test_rectified_review_closes_issue_with_optional_photo(self):
         transition = resolve_issue_review_transition("已整改")
 
         self.assertEqual(transition["new_status"], "已闭环")
-        self.assertTrue(transition["photo_required"])
+        self.assertFalse(transition["photo_required"])
         self.assertTrue(transition["photo_allowed"])
         self.assertFalse(transition["returns_to_station"])
 
@@ -54,7 +54,7 @@ class IssueReviewWorkflowTests(unittest.TestCase):
             self.assertTrue(transition['photo_allowed'])
             self.assertEqual(transition['new_status'], '已闭环')
         for mode in ('offline', None, '', 'invalid'):
-            self.assertTrue(resolve_issue_review_transition('整改通过', '已整改', mode)['photo_required'])
+            self.assertFalse(resolve_issue_review_transition('整改通过', '已整改', mode)['photo_required'])
 
     def test_retired_unable_results_are_rejected(self):
         for value in ("站级无法整改", "站经无法整改", "站经理无法整改"):
@@ -149,14 +149,14 @@ class ReviewSubmissionTests(unittest.TestCase):
         self.assertEqual(event.call_args.args[-1], 'rectifications/review.jpg')
         conn.commit.assert_called_once()
 
-    def test_approval_remains_mandatory_and_legacy_result_still_saves_photo(self):
+    def test_approval_and_legacy_result_allow_missing_or_uploaded_photo(self):
         for result in ('整改通过', '已整改'):
             with self.subTest(result=result):
-                _, code, _, conn, saved, event = self.submit(result=result)
-                self.assertEqual(code, 400)
+                body, code, _, conn, saved, event = self.submit(result=result)
+                self.assertEqual((code,body['status']), (200,'已闭环'))
                 saved.assert_not_called()
-                event.assert_not_called()
-                conn.commit.assert_not_called()
+                self.assertIsNone(event.call_args.args[-1])
+                conn.commit.assert_called_once()
                 body, code, _, _, saved, event = self.submit(result=result, photo=True)
                 self.assertEqual(code, 200)
                 self.assertEqual(body['status'], '已闭环')
@@ -164,14 +164,19 @@ class ReviewSubmissionTests(unittest.TestCase):
                 saved.assert_called_once()
                 self.assertEqual(event.call_args.args[-1], 'rectifications/review.jpg')
 
-    def test_unable_application_reviews_do_not_start_accepting_photos(self):
+    def test_unable_application_reviews_accept_and_record_optional_photos(self):
         for result in ('通过站级无法整改', '驳回站级无法整改'):
-            with self.subTest(result=result):
-                body, code, _, _, saved, event = self.submit(result=result, station_result='站经无法整改', photo=True)
-                self.assertEqual(code, 200)
-                self.assertEqual(body['status'], '站级无法整改' if result.startswith('通过') else '待整改')
-                saved.assert_not_called()
-                self.assertIsNone(event.call_args.args[-1])
+            for photo in (False,True):
+                with self.subTest(result=result,photo=photo):
+                    body, code, cur, conn, saved, event = self.submit(result=result, station_result='站经无法整改', photo=photo)
+                    self.assertEqual(code, 200)
+                    state='站级无法整改' if result.startswith('通过') else '待整改'
+                    path='rectifications/review.jpg' if photo else None
+                    self.assertEqual(body['status'], state)
+                    self.assertEqual(saved.call_count,int(photo))
+                    self.assertEqual(event.call_args.args[-1],path)
+                    self.assertEqual(cur.execute.call_args.args[1],(result,'',path,state,42))
+                    conn.commit.assert_called_once()
 
     def test_unable_application_rectified_approval_closes_and_records_current_round_photo(self):
         for role in ('supervisor', 'supervisor_manager'):
@@ -214,10 +219,8 @@ class ReviewSubmissionTests(unittest.TestCase):
                     self.assertEqual(saved.call_count,int(photo))
                     conn.commit.assert_called_once()
 
-    def test_client_cannot_waive_offline_photo_or_bypass_review_guards_by_claiming_video(self):
-        for args, code in [({'checklist_mode':'offline','posted_mode':'online'},400),
-                           ({'checklist_mode':None,'posted_mode':'online'},400),
-                           ({'checklist_mode':'online','role':'station_manager'},403),
+    def test_optional_photos_do_not_bypass_review_guards_by_claiming_video(self):
+        for args, code in [({'checklist_mode':'online','role':'station_manager'},403),
                            ({'checklist_mode':'online','audit':'pending'},409),
                            ({'checklist_mode':'online','status':'已闭环'},400)]:
             with self.subTest(args=args):
@@ -269,8 +272,8 @@ class UnableClosureDatabaseTests(unittest.TestCase):
     def connect(self):
         return psycopg2.connect(**self.config, cursor_factory=RealDictCursor, options=f'-c search_path={self.schema}')
 
-    def submit(self, *, photo=True, claimed_mode=None):
-        data = dict(review_result='整改通过',review_note='',checklist_mode=claimed_mode or '')
+    def submit(self, *, photo=True, claimed_mode=None, result='整改通过'):
+        data = dict(review_result=result,review_note='',checklist_mode=claimed_mode or '')
         if photo: data['review_photo'] = (BytesIO(b'fixture-only'),'review.png')
         with core_app.app.test_request_context('/api/issues/42/review',method='POST',data=data):
             value = core_app.submit_review(42)
@@ -335,16 +338,39 @@ class UnableClosureDatabaseTests(unittest.TestCase):
         self.cur.execute("SELECT photo_path FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
         self.assertEqual(self.cur.fetchone()['photo_path'],'rectifications/fixture.jpg')
 
-    def test_offline_without_photo_cannot_be_overridden_by_video_form_field(self):
+    def test_all_outcomes_accept_optional_photos_in_database_and_flow_history(self):
+        cases=[('已整改','整改通过','已闭环'),('已整改','整改不通过','待整改'),
+               ('站经无法整改','通过站级无法整改','站级无法整改'),
+               ('站经无法整改','驳回站级无法整改','待整改'),('站经无法整改','整改通过','已闭环')]
+        for mode in ('offline','online',None):
+            for station,result,state in cases:
+                for photo in (False,True):
+                    with self.subTest(mode=mode,result=result,station=station,photo=photo):
+                        self.cur.execute('UPDATE inspection_tables SET checklist_mode=%s WHERE id=1',(mode,))
+                        self.cur.execute("""UPDATE issues SET status='待复核',rectification_result=%s,
+                            review_result=NULL,review_note=NULL,review_at=NULL,review_photo_path=NULL WHERE id=42""",(station,))
+                        self.admin.commit()
+                        with self.dependencies():
+                            body,code=self.submit(result=result,photo=photo)
+                        self.assertEqual(code,200,body)
+                        self.assertEqual(body['status'],state)
+                        path='rectifications/fixture.jpg' if photo else None
+                        self.cur.execute('SELECT review_result,review_photo_path,status FROM issues WHERE id=42')
+                        self.assertEqual(dict(self.cur.fetchone()),dict(review_result=result,review_photo_path=path,status=state))
+                        self.cur.execute("""SELECT result,photo_path,to_status FROM inspection_issue_flow_history
+                            WHERE action_type='review_submitted' ORDER BY id DESC LIMIT 1""")
+                        self.assertEqual(dict(self.cur.fetchone()),dict(result=result,photo_path=path,to_status=state))
+
+    def test_offline_ordinary_approval_without_photo_records_review_and_closes(self):
         self.cur.execute("UPDATE issues SET rectification_result='已整改' WHERE id=42")
         self.admin.commit()
         with self.dependencies():
             body, code = self.submit(photo=False, claimed_mode='online')
-        self.assertEqual(code,400); self.assertEqual(body['error'],'请上传复核照片。')
-        self.cur.execute('SELECT status,review_result FROM issues WHERE id=42')
-        self.assertEqual(dict(self.cur.fetchone()),dict(status='待复核',review_result=None))
+        self.assertEqual((code,body['status']),(200,'已闭环'))
+        self.cur.execute('SELECT status,review_result,review_photo_path FROM issues WHERE id=42')
+        self.assertEqual(dict(self.cur.fetchone()),dict(status='已闭环',review_result='整改通过',review_photo_path=None))
         self.cur.execute('SELECT COUNT(*) n FROM inspection_issue_flow_history')
-        self.assertEqual(self.cur.fetchone()['n'],1)
+        self.assertEqual(self.cur.fetchone()['n'],2)
 
 
 if __name__ == "__main__":

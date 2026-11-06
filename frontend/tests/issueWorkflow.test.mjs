@@ -4,7 +4,6 @@ import {
   reviewOptionsFor,
   reviewOptionLabel,
   rectificationResultLabel,
-  reviewRequiresPhoto,
   reviewAllowsPhoto,
   isReviewReturned,
   rectificationDraftFor,
@@ -90,33 +89,16 @@ test('unable applications also offer the canonical rectified approval with a cle
   assert.equal(reviewOptionLabel('整改通过', '已整改'), '整改通过')
   assert.equal(reviewOptionLabel('通过站级无法整改', '站经无法整改'), '通过站级无法整改')
 })
-test('only ordinary approval requires a photo; both rejection paths return', () => {
-  assert.ok(reviewRequiresPhoto('整改通过'))
-  for (const value of ['整改不通过', '通过站级无法整改', '驳回站级无法整改'])
-    assert.equal(reviewRequiresPhoto(value), false)
+test('all valid review outcomes allow optional photos and keep return semantics', () => {
+  for (const value of ['整改通过', '整改不通过', '通过站级无法整改', '驳回站级无法整改'])
+    assert.equal(reviewAllowsPhoto(value), true)
   assert.ok(isReviewReturned('整改不通过'))
   assert.ok(isReviewReturned('驳回站级无法整改'))
   assert.equal(isReviewReturned('通过站级无法整改'), false)
 })
 
-test('video approval photo is optional but upload remains available; offline or unknown attributes remain mandatory', () => {
-  assert.equal(reviewRequiresPhoto('整改通过', 'online'), false)
-  assert.equal(reviewAllowsPhoto('整改通过'), true)
-  for (const mode of ['offline', undefined, null, '', 'invalid']) {
-    assert.equal(reviewRequiresPhoto('整改通过', mode), true)
-  }
-  for (const mode of ['online','offline']) {
-    for (const result of ['整改不通过','通过站级无法整改','驳回站级无法整改']) {
-      assert.equal(reviewRequiresPhoto(result,mode),false)
-    }
-  }
-})
-
-test('ordinary rejection allows an optional photo without changing unable-result branches', () => {
-  assert.equal(reviewAllowsPhoto('整改通过'), true)
-  assert.equal(reviewAllowsPhoto('整改不通过'), true)
-  assert.equal(reviewRequiresPhoto('整改不通过'), false)
-  for (const result of ['', '通过站级无法整改', '驳回站级无法整改', 'invalid']) {
+test('invalid or unselected results do not enable the review uploader', () => {
+  for (const result of ['', undefined, null, 'invalid', '站级无法整改']) {
     assert.equal(reviewAllowsPhoto(result), false)
   }
 })
@@ -124,7 +106,6 @@ test('ordinary rejection allows an optional photo without changing unable-result
 test('unable applications can close without a photo; historical spellings display correctly', () => {
   for (const result of ['站经无法整改','站级无法整改','站经理无法整改','站级无法完成整改']) {
     assert.equal(rectificationResultLabel(result), '站级无法整改')
-    for (const mode of ['offline','online',undefined]) assert.equal(reviewRequiresPhoto('整改通过',mode,result),false)
+    for (const option of reviewOptionsFor(result)) assert.equal(reviewAllowsPhoto(option),true)
   }
-  assert.equal(reviewRequiresPhoto('整改通过','offline','已整改'),true)
 })

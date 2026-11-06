@@ -6490,8 +6490,8 @@ def resolve_issue_review_transition(value, rectification_result=None, checklist_
         return {
             "review_result": review_result,
             "new_status": "已闭环" if review_result == "整改通过" else "站级无法整改",
-            "photo_required": review_result == "整改通过" and checklist_mode != "online" and canonical_issue_result(rectification_result) != "站经无法整改",
-            "photo_allowed": review_result == "整改通过",
+            "photo_required": False,
+            "photo_allowed": True,
             "returns_to_station": False,
         }
     if review_result in {"整改不通过", "驳回站级无法整改"}:
@@ -6499,7 +6499,7 @@ def resolve_issue_review_transition(value, rectification_result=None, checklist_
             "review_result": review_result,
             "new_status": "待整改",
             "photo_required": False,
-            "photo_allowed": review_result == "整改不通过",
+            "photo_allowed": True,
             "returns_to_station": True,
         }
 
@@ -33922,10 +33922,7 @@ def submit_review(issue_id):
             return jsonify({"success": False, "error": str(exc)}), 400
         review_result = transition["review_result"]
         new_status = transition["new_status"]
-        # The persisted checklist attribute, never a submitted form value or a
-        # table-name suffix, determines whether a review photo is mandatory.
-        if transition["photo_required"] and (not review_photo or not review_photo.filename):
-            return jsonify({"success": False, "error": "请上传复核照片。"}), 400
+        # All review outcomes accept optional evidence; rectification rules are separate.
         review_photo_path = None
         if transition["photo_allowed"] and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")

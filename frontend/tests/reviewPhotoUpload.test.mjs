@@ -57,7 +57,7 @@ test('plain text, missing clipboard data and non-image files are not consumed as
   )
 })
 
-test('approval and rejection share one uploader, editor and submit path with separate required validation', () => {
+test('every review outcome shares one optional uploader without photo-required validation', () => {
   const source = readFileSync(
     new URL('../src/views/inspection/MyIssuesView.vue', import.meta.url),
     'utf8',
@@ -66,7 +66,7 @@ test('approval and rejection share one uploader, editor and submit path with sep
     source,
     /shouldShowReviewPhotoUpload = computed\(\(\) => reviewAllowsPhoto\(actionForm.value.reviewResult\)\)/,
   )
-  assert.match(source, /if \(reviewPhotoRequired && !actionForm.value.reviewPhotoFile\)/)
+  assert.doesNotMatch(source, /reviewPhotoRequired|reviewRequiresPhoto|请上传问题复核照片/)
   assert.match(
     source,
     /if \(reviewAllowsPhoto\(actionForm.value.reviewResult\) && actionForm.value.reviewPhotoFile\)/,
@@ -76,9 +76,8 @@ test('approval and rejection share one uploader, editor and submit path with sep
   assert.equal((source.match(/label="问题复核照片"/g) || []).length, 1)
   assert.match(
     source,
-    /复核照片 <span v-if="!reviewRequiresPhoto\(actionForm.reviewResult, actionDrawer.item\?\.checklist_mode, actionDrawer.item\?\.rectification_result\)" class="optional-field-tag">选填/,
+    /问题复核照片 <span class="optional-field-tag">选填/,
   )
-  assert.match(source, /reviewPhotoRequired = reviewRequiresPhoto\(actionForm.value.reviewResult, actionDrawer.value.item\?\.checklist_mode, actionDrawer.value.item\?\.rectification_result\)/)
   assert.match(source, /本次问题复核照片为选填，可不上传/)
   assert.ok(!source.includes('整改不通过将退回站经理重新整改，本次无需上传复核照片。'))
 })
