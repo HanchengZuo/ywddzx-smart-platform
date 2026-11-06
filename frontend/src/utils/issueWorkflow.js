@@ -6,8 +6,7 @@ export const reviewOptionsFor = result => isUnableRectification(result)
   : ['整改通过', '整改不通过']
 export const reviewOptionLabel = (value, stationResult) => value === '整改通过' && isUnableRectification(stationResult)
   ? '整改通过（问题状态变更为已闭环）' : value
-export const reviewRequiresPhoto = (result, checklistMode, stationResult) => result === '整改通过' && checklistMode !== 'online' && !isUnableRectification(stationResult)
-export const reviewAllowsPhoto = result => ['整改通过', '整改不通过'].includes(result)
+export const reviewAllowsPhoto = result => ['整改通过', '整改不通过', '通过站级无法整改', '驳回站级无法整改'].includes(result)
 
 export const rectificationReturnKind = item => item?.appeal_rejected ? 'appeal' : isReviewReturned(item?.review_result) ? 'review' : ''
 

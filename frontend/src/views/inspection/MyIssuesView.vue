@@ -23,7 +23,7 @@
           <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
         </div>
         <div class="summary-desc">
-          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，问题复核说明选填，照片要求随结论变化' : '仅可查看，提交处理权限尚未开启' }}
+          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，问题复核说明和照片均为选填' : '仅可查看，提交处理权限尚未开启' }}
         </div>
       </div>
 
@@ -589,14 +589,14 @@
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
-              <label>问题复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode, actionDrawer.item?.rectification_result)" class="optional-field-tag">选填</span></label>
+              <label>问题复核照片 <span class="optional-field-tag">选填</span></label>
               <InspectionPhotoUpload ref="reviewPhotoUploadRef" v-model="actionForm.reviewPhotoFile" id-prefix="review-photo"
                 label="问题复核照片" :disabled="submittingAction"
                 :active="actionDrawer.visible && !previewState.visible && !standardDetailState.visible"
                 @notify="showActionToast" @busy-change="reviewPhotoProcessing = $event" />
             </div>
             <div v-else class="drawer-photo-skip-note">
-              {{ reviewPhotoSkipMessage }}
+              请先选择问题复核结果，问题复核照片为选填，不上传也可以提交。
             </div>
           </template>
 
@@ -654,7 +654,7 @@ import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
-import { isUnableRectification, rectificationResultLabel, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
+import { isUnableRectification, rectificationResultLabel, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -1164,12 +1164,8 @@ const actionForm = ref({
 const skipsIssuePhotoUpload = value => isUnableRectification(value) || isReviewReturned(value) || value === '通过站级无法整改'
 const shouldShowRectificationPhotoUpload = computed(() => !isUnableRectification(actionForm.value.rectificationResult))
 const shouldShowReviewPhotoUpload = computed(() => reviewAllowsPhoto(actionForm.value.reviewResult))
-const reviewPhotoSkipMessage = computed(() => {
-  if (isUnableRectification(actionDrawer.value.item?.rectification_result)) return '站级无法整改申请复核无需上传照片，问题复核说明选填。'
-  return '选择问题复核结果后，系统会根据结果提示是否需要上传照片。'
-})
 const reviewOutcomeHint = computed(() => {
-  if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。' }
+  if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。问题复核照片选填。' }
   if (isReviewReturned(actionForm.value.reviewResult)) {
     return {
       type: 'returned',
@@ -1181,9 +1177,7 @@ const reviewOutcomeHint = computed(() => {
     return {
       type: 'closed',
       title: '将完成问题闭环',
-      description: reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
-        ? '确认整改有效后，请上传能够反映问题复核结果的照片。'
-        : '本次问题复核照片为选填，可不上传；提交后问题将变为已闭环。'
+      description: '本次问题复核照片为选填，可不上传；提交后问题将变为已闭环。'
     }
   }
 
@@ -1468,12 +1462,6 @@ const submitAction = async () => {
       showActionToast('请选择问题复核结果。', 'error')
       return
     }
-    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode, actionDrawer.value.item?.rectification_result)
-    if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
-      showActionToast('请上传问题复核照片。', 'error')
-      return
-    }
-
     const item = actionDrawer.value.item
     if (!await stationLocationRef.value.confirm({ id: item.station_id, station_name: item.station,
       longitude: item.station_longitude, latitude: item.station_latitude })) return
