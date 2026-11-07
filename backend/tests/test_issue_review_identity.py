@@ -71,13 +71,13 @@ class ReviewIdentityDatabaseTests(unittest.TestCase):
         self.cur.execute("""
             SET TIME ZONE 'Asia/Shanghai';
             ALTER TABLE inspection_tables ADD COLUMN is_active boolean DEFAULT true;
-            ALTER TABLE inspection_issue_flow_history ADD COLUMN created_at timestamptz DEFAULT CURRENT_TIMESTAMP;
             ALTER TABLE inspection_issue_flow_history DROP CONSTRAINT inspection_issue_flow_history_actor_user_id_fkey;
             ALTER TABLE inspection_issue_flow_history ADD FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL;
             UPDATE users SET role='quality_safety';
             UPDATE inspection_tables SET table_name='质量安全环保检查表（现场）';
             UPDATE issues SET rectification_result='已整改';
         """)
+        review_tests.mark_quality_handoff(self.cur, 42)
         self.admin.commit()
 
     def connect(self):

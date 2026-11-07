@@ -58,6 +58,8 @@ def flow_event_presentation(event):
             event['action_label'] = f'问题重新判定：{result}'
         elif result in ('审核通过', '审核否决'):
             event['action_label'] = f'{"自动" if event.get("note", "").startswith("自动审核") else "问题"}审核：{result}'
+    elif kind == 'review_transferred_to_quality':
+        event.update(stage_label='复核转交', tone='info', from_label='督导中心待复核', to_label='质安部待复核')
     elif kind in ('rectification_submitted', 'review_submitted'):
         event['stage_label'] = '问题复核' if kind == 'review_submitted' else '站点整改'
         event['tone'] = 'returned' if result in ('整改不通过', '驳回站级无法整改') else 'success' if kind == 'review_submitted' else 'info'

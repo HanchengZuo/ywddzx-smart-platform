@@ -11,18 +11,36 @@ SOURCES = (
          trigger='站点成功提交申诉',rule='按现有片区归属匹配，不扩大数据权限。'),
     dict(key='appeal_quality',menu='申诉空间',name='待质安部处理申诉',recipient='拥有申诉终审权限的有效质安部账号',
          trigger='片区通过并转入质安部（含时限规则自动通过）',rule='只通知具备终审权限的账号。'),
+    dict(key='quality_review_handoff',menu='我的待复核问题',name='督导中心转交复核',recipient='同时具备查看待复核和提交复核权限的有效质安部账号',
+         trigger='督导中心将质安部所属检查表的待复核问题转交',rule='每轮转交仅通知一次；待办已处理或权限变化后跳过未投递推送。'),
     dict(key='inspection_signature',menu='巡检记录',name='待站经理签名验收',recipient='对应站点的有效站点角色账号',
          trigger='检查人确认完成且所有问题审核结束，记录尚未签名',rule='与菜单红点一致；适用时附上质安验收截止时间。'),
 )
 
 
-def recipient_resolver(*, can_sign, has_permission, normalize_region, region_scope):
-    # Only these four domain capabilities are needed, not app globals or an app import.
+def quality_review_recipients(cur, has_permission):
+    cur.execute("SELECT id, role FROM users WHERE role='quality_safety' AND account_status='active' ORDER BY id")
+    return [user['id'] for user in cur.fetchall() if all(
+        has_permission(cur, user, key) for key in ('view_my_review_issues', 'submit_my_issue_reviews')
+    )]
+
+
+def notify_quality_review(cur, issue, event_id, recipients):
+    enqueue_business(cur, event_key=f"quality_review:{event_id}", source='quality_review_handoff',
+        entity_id=issue['id'], title='督导中心转交问题复核',
+        body=f"{issue['station_name']} · {issue['table_name']} · 问题 #{issue['id']} 已转交质安部。请查看转交原因并办理复核。",
+        recipients=recipients, action_path='/inspection/my-reviews',
+        push_hint='督导中心有事项转交质安部复核，请登录办理。')
+
+
+def recipient_resolver(*, can_sign, has_permission, normalize_region, region_scope, quality_table_ids=None):
     policy=SimpleNamespace(can_sign_inspection_records=can_sign,has_permission=has_permission,
         normalize_station_region_value=normalize_region,get_effective_station_region_scope_values=region_scope)
-    def resolve(cur, stage, station_id, region):
+    def resolve(cur, stage, scope_id, region):
+        if stage == 'quality_review':
+            return quality_review_recipients(cur, has_permission) if quality_table_ids and scope_id in quality_table_ids(cur) else []
         from quality_deadlines import responsible_users
-        return [user['id'] for user in responsible_users(cur,policy,stage,station_id,region)]
+        return [user['id'] for user in responsible_users(cur,policy,stage,scope_id,region)]
     return resolve
 
 
@@ -105,6 +123,13 @@ def process_signature_changes(connect, recipients, limit=50):
 
 
 def delivery_allowed(cur, message, user_id, recipients):
+    if message['source']=='quality_review_handoff':
+        cur.execute("""SELECT inspection_table_id FROM issues WHERE id=%s
+          AND status='待复核' AND audit_status='approved'
+          AND 'quality_review:' || quality_review_handoff_id::text = %s""",
+          (message['entity_id'],message['event_key']))
+        record=cur.fetchone()
+        return bool(record and user_id in recipients(cur,'quality_review',record['inspection_table_id'],None))
     if message['source']=='daily_schedule':
         from web_push_schedule import delivery_allowed as schedule_allowed
         return schedule_allowed(cur,message,user_id)

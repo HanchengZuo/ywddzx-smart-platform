@@ -11,7 +11,7 @@
         <p v-if="event.result && event.result !== event.action_label" class="event-result">处理结果：{{ rectificationResultLabel(event.result) }}</p>
         <div class="flow-event-meta"><span v-if="event.actor_department" class="actor-department">{{ event.actor_department }}</span>{{ event.action_type === 'review_submitted' ? '问题复核人员' : '操作人' }}：{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮整改复核</span></div>
         <div v-if="event.from_label || event.from_status" class="status-path"><span>{{ event.from_label || event.from_status }}</span><b>→</b><strong>{{ event.to_label || event.to_status }}</strong></div>
-        <p v-if="event.note" class="event-note"><span>处理说明</span>{{ event.note }}</p>
+        <p v-if="event.note" class="event-note"><span>{{ event.action_type === 'review_transferred_to_quality' ? '转交原因' : '处理说明' }}</span>{{ event.note }}</p>
         <p v-if="event.history_notice" class="history-notice">{{ event.history_notice }}</p>
         <button v-if="event.photo_path" class="flow-photo-thumb" type="button" :aria-label="`放大查看${event.action_label}照片`" @click="$emit('photo', event)">
           <img :src="resolvePhoto(event.photo_path)" :alt="`${event.action_label}照片`" loading="lazy" />

@@ -1,4 +1,5 @@
 import unittest
+import importlib
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,14 @@ from psycopg2.extras import RealDictCursor
 
 import app as core_app
 from app import classify_non_oil_rectification, resolve_issue_review_transition
+
+
+def mark_quality_handoff(cur, issue_id):
+    event_id = core_app.record_issue_workflow_event(
+        cur, issue_id, dict(id=17, role='supervisor'), 'review_transferred_to_quality',
+        '待复核', '待复核', None, '需要专业判断',
+    )
+    cur.execute('UPDATE issues SET quality_review_handoff_id=%s WHERE id=%s', (event_id, issue_id))
 
 
 class IssueReviewWorkflowTests(unittest.TestCase):
@@ -255,13 +264,17 @@ class UnableClosureDatabaseTests(unittest.TestCase):
           CREATE TABLE inspection_tables(id int PRIMARY KEY,table_name text,checklist_mode text);
           INSERT INTO inspection_tables VALUES(1,'名字含视频但属性为现场','offline');
           CREATE TABLE issues(id int PRIMARY KEY,inspection_table_id int REFERENCES inspection_tables(id),status text,rectification_result text,audit_status text,
-            review_result text,review_note text,review_at timestamp,review_photo_path text);
+            review_result text,review_note text,review_at timestamp,review_photo_path text,rectification_at timestamp);
           INSERT INTO issues(id,inspection_table_id,status,rectification_result,audit_status) VALUES(42,1,'待复核','站经无法整改','approved');
           CREATE TABLE inspection_issue_flow_history(id serial PRIMARY KEY,issue_id int REFERENCES issues(id),round_no int,
             action_type text,from_status text,to_status text,result text,note text,photo_path text,
-            actor_user_id int REFERENCES users(id),actor_username text,actor_name text,actor_role text);
+            actor_user_id int REFERENCES users(id),actor_username text,actor_name text,actor_role text,
+            created_at timestamptz DEFAULT CURRENT_TIMESTAMP);
           INSERT INTO inspection_issue_flow_history(issue_id,round_no,action_type,from_status,to_status,result)
             VALUES(42,1,'rectification_submitted','待整改','待复核','站经无法整改');''')
+        migration = importlib.import_module('migrations.versions.20261107_001_quality_review_handoff')
+        with patch.object(migration.op, 'execute', side_effect=self.cur.execute):
+            migration.upgrade()
         self.admin.commit()
 
     def tearDown(self):

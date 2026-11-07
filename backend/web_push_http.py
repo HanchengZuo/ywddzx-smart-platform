@@ -99,7 +99,7 @@ def register_web_push(app, *, connect, has_permission):
                 if match: page=(match['position']-1)//20+1
             cur.execute('SELECT enabled FROM web_push_preferences WHERE user_id=%s',(user['id'],))
             preference=cur.fetchone()
-            cur.execute('''SELECT m.id,m.title,m.body,m.kind,m.source,m.action_path,m.sender_name,m.created_at,r.read_at,r.confirmed_at,r.delivery_note,
+            cur.execute('''SELECT m.id,m.title,m.body,m.kind,m.source,m.action_path,m.entity_id,m.sender_name,m.created_at,r.read_at,r.confirmed_at,r.delivery_note,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status='accepted') AS accepted,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status IN ('queued','sending')) AS pending,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status IN ('failed','expired','skipped')) AS failed
