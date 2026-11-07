@@ -8,7 +8,7 @@ function messageId(value, tag) {
 self.addEventListener('push', event => {
   let value = {}
   try { value = event.data?.json() || {} } catch { /* Display a generic visible notification. */ }
-  const business = ['appeal_area', 'appeal_quality', 'inspection_signature', 'daily_schedule'].includes(value.scene)
+  const business = ['appeal_area', 'appeal_quality', 'inspection_signature', 'daily_schedule', 'quality_review_handoff'].includes(value.scene)
   event.waitUntil(self.registration.showNotification('业务督导中心 · 新通知', {
     body: business && typeof value.hint === 'string' ? value.hint.slice(0, 240) : '你有一条系统消息，请登录通知中心查看。',
     icon: '/push-icon-192.png', badge: '/push-icon-192.png',

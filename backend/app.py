@@ -911,14 +911,14 @@ PERMISSION_CATALOG = [
         "key": "view_my_review_issues",
         "name": "查看页面",
         "category": "我的待复核问题",
-        "description": "督导中心视角不参与发展计划部、油气事业部及财务部所属检查表的复核；五类处室仅查看本部门检查表，Root仍可查看全部。范围包含历史版本。",
+        "description": "质安部只查看督导中心转交的本部门待复核事项；其余处室分工不变，Root仍可查看全部。范围包含历史版本。",
         "defaults": {"root": True, "supervisor": True, "quality_safety": True},
     },
     {
         "key": "submit_my_issue_reviews",
         "name": "提交复核",
         "category": "我的待复核问题",
-        "description": "在本页面允许的范围内提交复核结论、说明和照片；关闭后保留只读查看能力。此开关不授予问题审核权限。",
+        "description": "在本页面允许的范围内提交复核；两类督导组还可转交质安部所属问题。关闭后保留只读查看能力，不授予问题审核权限。",
         "defaults": {"root": True, "supervisor": True, "quality_safety": True},
     },
     {
@@ -6422,12 +6422,25 @@ def review_queue_table_ids(cur, user):
 def review_queue_scope(cur, user):
     """Same fixed perspective for list, facets, badges and review submission."""
     ids = review_queue_table_ids(cur, user)
-    return ("TRUE", []) if ids is None else ("i.inspection_table_id = ANY(%s)", [ids])
+    if ids is None:
+        return "TRUE", []
+    scope = "i.inspection_table_id = ANY(%s)"
+    if user["role"] == "quality_safety":
+        scope += " AND i.quality_review_handoff_id IS NOT NULL"
+    elif is_supervisor_role(user["role"]):
+        scope += " AND i.quality_review_handoff_id IS NULL"
+    return scope, [ids]
 
 
 def issue_in_review_queue_scope(cur, user, issue):
     ids = review_queue_table_ids(cur, user)
-    return ids is None or issue.get("inspection_table_id") in ids
+    if ids is None:
+        return True
+    if issue.get("inspection_table_id") not in ids:
+        return False
+    if user["role"] == "quality_safety":
+        return bool(issue.get("quality_review_handoff_id"))
+    return not (is_supervisor_role(user["role"]) and issue.get("quality_review_handoff_id"))
 
 
 def can_edit_inspection_issues(cur, user):
@@ -6548,7 +6561,8 @@ def record_issue_workflow_event(
             actor_name,
             actor_role
         )
-        VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, %s, %s, %s, %s)
+        RETURNING id;
         """,
         (
             issue_id,
@@ -6565,7 +6579,7 @@ def record_issue_workflow_event(
             str(actor.get("role") or "").strip() or None,
         ),
     )
-    return round_no
+    return cur.fetchone()["id"]
 
 
 def issue_created_by_user(user, issue):
@@ -26254,17 +26268,29 @@ def get_my_issues():
                     i.audited_by,
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
                     ins.sign_status AS inspection_sign_status,
-                    ins.inspector_completion_status AS inspection_completion_status
+                    ins.inspector_completion_status AS inspection_completion_status,
+                    i.inspection_table_id,
+                    i.quality_review_handoff_id,
+                    handoff.note AS quality_review_handoff_reason,
+                    COALESCE(handoff.actor_name, handoff.actor_username) AS quality_review_handoff_by,
+                    TO_CHAR(handoff.created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') AS quality_review_handoff_at
                 FROM page_ids selected
                 JOIN issues i ON i.id = selected.id
                 JOIN inspections ins ON i.inspection_id = ins.id
                 LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
+                LEFT JOIN inspection_issue_flow_history handoff ON handoff.id = i.quality_review_handoff_id
                 ORDER BY i.id DESC;
                 """, [*params, page_size, (page - 1) * page_size]
             )
             rows = cur.fetchall()
+            if rows and is_supervisor_role(user["role"]) and has_permission(cur, user, "submit_my_issue_reviews"):
+                quality_ids = set(get_role_default_inspection_table_ids(cur, "quality_safety", include_inactive=True))
+                for row in rows:
+                    row["can_transfer_to_quality"] = (
+                        row.get("inspection_table_id") in quality_ids and row.get("audit_status") == "approved"
+                    )
             attach_internal_standard_tags_to_issue_rows(cur, rows)
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
@@ -33524,13 +33550,15 @@ def serialize_issue_flow_history_event(row):
         }[action_type]
     elif action_type == "rectification_submitted":
         action_label = "站经理提交整改"
+    elif action_type == "review_transferred_to_quality":
+        action_label = "转交质安部复核"
     elif action_type == 'review_submitted':
         action_label = "问题复核退回整改" if result in {"整改不通过", "驳回站级无法整改"} else "提交问题复核"
     else:
         action_label = "问题流转"
     event["action_label"] = action_label
     event["result"] = result or None
-    if action_type not in {"rectification_submitted", "review_submitted"}:
+    if action_type not in {"rectification_submitted", "review_submitted", "review_transferred_to_quality"}:
         event["round_no"] = None
     event["actor_display_name"] = (
         str(event.get("actor_name") or "").strip()
@@ -33569,6 +33597,7 @@ def get_issue_flow_history(issue_id):
                 i.id,
                 i.station_id,
                 i.inspection_table_id,
+                i.quality_review_handoff_id,
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 s.region AS station_region,
                 s.station_name,
@@ -33834,6 +33863,56 @@ def submit_rectification(issue_id):
         close_db_resources(cur, conn)
 
 
+@app.post("/api/issues/<int:issue_id>/review-transfer")
+def transfer_review_to_quality(issue_id):
+    from web_push_business import notify_quality_review, quality_review_recipients
+
+    user = get_current_request_user()
+    data = request.get_json(silent=True)
+    reason = data.get("reason") if isinstance(data, dict) else None
+    if not isinstance(reason, str) or not (1 <= len(reason.strip()) <= 1000):
+        return jsonify(success=False, error="请填写转交原因，最多1000字。"), 400
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if not (is_supervisor_role(user["role"]) and can_view_review_queue(cur, user)
+                and has_permission(cur, user, "submit_my_issue_reviews")):
+            return jsonify(success=False, error="当前账号无权转交复核。"), 403
+        cur.execute("""
+            SELECT i.id,i.status,i.audit_status,i.inspection_table_id,i.quality_review_handoff_id,
+                   s.station_name,t.table_name
+            FROM issues i JOIN stations s ON s.id=i.station_id
+            JOIN inspection_tables t ON t.id=i.inspection_table_id
+            WHERE i.id=%s FOR UPDATE OF i
+        """, (issue_id,))
+        issue = cur.fetchone()
+        if not issue:
+            return jsonify(success=False, error="问题不存在。"), 404
+        if issue["inspection_table_id"] not in get_role_default_inspection_table_ids(
+                cur, "quality_safety", include_inactive=True):
+            return jsonify(success=False, error="仅质安部所属检查表的问题可转交。"), 403
+        if issue["status"] != "待复核" or issue["audit_status"] != "approved" or issue["quality_review_handoff_id"]:
+            return jsonify(success=False, error="该问题已转交或不再符合待复核条件，请刷新清单。"), 409
+        recipients = quality_review_recipients(cur, has_permission)
+        if not recipients:
+            return jsonify(success=False, error="暂无具备复核权限的有效质安部账号，问题仍留在督导中心。"), 409
+
+        event_id = record_issue_workflow_event(cur, issue_id, user, "review_transferred_to_quality",
+                                               "待复核", "待复核", None, reason.strip())
+        cur.execute("UPDATE issues SET quality_review_handoff_id=%s WHERE id=%s", (event_id, issue_id))
+        notify_quality_review(cur, issue, event_id, recipients)
+        conn.commit()
+        return jsonify(success=True, message="已转交质安部复核，办理通知已入队。")
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to transfer review for issue %s", issue_id)
+        return jsonify(success=False, error="转交失败，请稍后重试。"), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/issues/<int:issue_id>/review", methods=["POST"])
 def submit_review(issue_id):
     user_id = get_authenticated_request_user_id(request.form.get("user_id"))
@@ -33882,7 +33961,7 @@ def submit_review(issue_id):
 
         cur.execute(
             """
-            SELECT i.id, i.inspection_table_id, i.status, i.rectification_result,
+            SELECT i.id, i.inspection_table_id, i.status, i.rectification_result, i.quality_review_handoff_id,
                 COALESCE(i.audit_status, 'pending') AS audit_status, t.checklist_mode
             FROM issues i
             LEFT JOIN inspection_tables t ON t.id = i.inspection_table_id
@@ -33898,7 +33977,7 @@ def submit_review(issue_id):
             return jsonify({"success": False, "error": "问题不存在。"}), 404
 
         if not issue_in_review_queue_scope(cur, user, issue):
-            return jsonify(success=False, error="该检查表不在当前复核视角范围内，请由对应处室部门复核。"), 403
+            return jsonify(success=False, error="该问题不在当前账号的复核范围，可能已转交或由对应部门处理。"), 403
 
         if is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "该问题已被审核否决，不再参与复核流转。"}), 400
@@ -34140,7 +34219,8 @@ register_checklist_versions(app, db=get_db_connection, current_user=get_current_
     file_user=lambda: verify_file_access_token(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or ''))
 from web_push_business import recipient_resolver
 push_recipients = recipient_resolver(can_sign=can_sign_inspection_records,has_permission=has_permission,
-    normalize_region=normalize_station_region_value,region_scope=get_effective_station_region_scope_values)
+    normalize_region=normalize_station_region_value,region_scope=get_effective_station_region_scope_values,
+    quality_table_ids=lambda cur: get_role_default_inspection_table_ids(cur, "quality_safety", include_inactive=True))
 
 if __name__ == "__main__":
     from web_push_worker import start_push_worker

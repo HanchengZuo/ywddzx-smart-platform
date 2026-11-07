@@ -226,7 +226,7 @@ def main():
                     ('inspection_report_version_bindings', {'inspection_table_id','checklist_version_id'}),
                     ('checklist_record_version_corrections', {'reason','record_kind','record_id','before_data'}),
                     ('inspection_tables', {'active_version_id'}),
-                    ('issues', {'checklist_version_id'}),
+                    ('issues', {'checklist_version_id','quality_review_handoff_id'}),
                     ('inspections', {'checklist_version_id'}),
                     ('inspection_highlights', {'checklist_version_id'}),
                 ):

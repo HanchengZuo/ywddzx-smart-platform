@@ -3,7 +3,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import * as vue from 'vue'
-import { notificationMessageId } from '../src/utils/notificationTarget.js'
+import { businessNotificationPath, notificationMessageId } from '../src/utils/notificationTarget.js'
+
+test('quality handoff links target a single issue on the authorized review page', () => {
+  const item = { kind: 'business', source: 'quality_review_handoff', action_path: '/inspection/my-reviews', entity_id: 44 }
+  assert.deepEqual(businessNotificationPath(item), { path: '/inspection/my-reviews', query: { issue_id: '44' } })
+  assert.equal(businessNotificationPath({ ...item, entity_id: '44&admin=true' }), '')
+  assert.equal(businessNotificationPath({ ...item, action_path: 'https://example.test/' }), '')
+  assert.equal(businessNotificationPath({ ...item, kind: 'manual' }), '')
+})
 
 function setup(overrides = {}) {
   const { descriptor } = parse(
@@ -24,6 +32,7 @@ function setup(overrides = {}) {
     ...vue,
     useRoute: () => ({ query: {} }),
     notificationMessageId,
+    businessNotificationPath,
     AbortController,
     window: {
       Notification: { permission: 'granted' },

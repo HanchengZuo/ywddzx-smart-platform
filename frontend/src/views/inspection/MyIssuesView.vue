@@ -1,13 +1,48 @@
 <template>
   <div ref="pageRef" class="page-shell my-issues-page">
-    <div class="page-header card-surface">
+    <section v-if="isReviewQueue" class="review-overview" aria-labelledby="review-page-title">
+      <div class="review-overview-main">
+        <div>
+          <div class="review-overview-kicker">巡检系统 / 复核工作台</div>
+          <h2 id="review-page-title">我的待复核问题</h2>
+        </div>
+        <div class="review-overview-count" aria-live="polite">
+          <span>待复核</span>
+          <div><strong>{{ loading ? '…' : listError ? '—' : resultTotal }}</strong><small> 条</small></div>
+        </div>
+      </div>
+      <div class="review-overview-scope">
+        <div class="review-scope-heading">
+          <span class="review-scope-label">当前视角</span>
+          <strong>{{ queueScopeLabel }}</strong>
+          <span v-if="!canSubmitQueue" class="review-scope-label">只读</span>
+        </div>
+        <template v-if="isSupervisionPerspective">
+          <div class="scope-checklists" aria-label="督导中心复核覆盖部门">
+            <span>质安部</span><span>非油事业部</span>
+          </div>
+          <p>质安部所属问题由督导中心先复核；无法判断时可转交质安部。</p>
+        </template>
+        <template v-else>
+          <p v-if="accountRole === 'quality_safety'">仅显示督导中心转交给质安部的待复核问题。</p>
+          <details v-if="scopeTables.length" class="review-scope-details">
+            <summary>查看适用检查表（{{ scopeTables.length }}）</summary>
+            <div class="scope-checklists" aria-label="当前复核视角检查表">
+              <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
+            </div>
+          </details>
+        </template>
+      </div>
+    </section>
+
+    <div v-else class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
         <h2>{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</h2>
       </div>
     </div>
 
-    <div class="summary-grid" :class="{ 'summary-grid-station': currentRole === 'station_manager' }">
+    <div v-if="!isReviewQueue" class="summary-grid summary-grid-station">
       <div class="summary-card summary-card-primary card-surface">
         <div class="summary-label">当前待办</div>
         <div class="summary-value">{{ resultTotal }}</div>
@@ -19,11 +54,8 @@
         <div class="summary-value summary-value-small">
           {{ queueScopeLabel }}
         </div>
-        <div v-if="isReviewQueue && scopeTables.length" class="scope-checklists" aria-label="当前复核视角检查表">
-          <span v-for="table in scopeTables" :key="table.id">{{ table.table_name }}<small v-if="!table.is_active">历史</small></span>
-        </div>
         <div class="summary-desc">
-          {{ canSubmitQueue ? currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，问题复核说明和照片均为选填' : '仅可查看，提交处理权限尚未开启' }}
+          {{ canSubmitQueue ? '可填写整改结果、整改说明并上传整改照片' : '仅可查看，提交处理权限尚未开启' }}
         </div>
       </div>
 
@@ -62,6 +94,10 @@
       </div>
 
       <FilterSummary :fields="filterSummaryFields" :manual="isMobileReview" />
+      <div v-if="isMobileReview && notificationIssueId" class="review-scope-heading">
+        <span class="handoff-badge">已定位问题 #{{ notificationIssueId }}</span>
+        <button class="btn btn-secondary btn-sm" type="button" @click="clearReviewFocus">清除定位</button>
+      </div>
 
       <div v-if="currentRole === 'station_manager'" class="filter-grid">
         <div class="filter-item" :data-filter-state="filterFieldState('region')">
@@ -229,12 +265,17 @@
           </div>
 
           <div class="mobile-card-actions action-stack">
+            <div v-if="item.quality_review_handoff_id" class="review-handoff-note">
+              <strong>督导中心转交</strong>
+              <span>{{ item.quality_review_handoff_reason }}</span>
+            </div>
             <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
               :disabled="!canSubmitQueue || (currentRole === 'station_manager' && !isInspectionSigned(item))">
               {{ currentRole === 'station_manager'
                 ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                 : '提交复核' }}
             </button>
+            <button v-if="item.can_transfer_to_quality" class="btn btn-secondary" type="button" @click="openTransfer(item)">转交质安部</button>
             <template v-if="currentRole === 'station_manager' && item.can_appeal">
               <button class="btn appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
               <WorkflowDeadline v-if="item.appeal_deadline_enabled" :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
@@ -396,7 +437,7 @@
                       <p>{{ reviewReturnReason(item) }}</p>
                       <small>{{ returnTime(item) }}</small>
                     </template>
-                    <button v-if="currentRole === 'station_manager'" class="status-flow-link" type="button"
+                    <button v-if="currentRole === 'station_manager' || item.quality_review_handoff_id" class="status-flow-link" type="button"
                       @click="openFlowDialog(item)">
                       {{ isReturnedForRectification(item) ? '查看完整流转' : '查看流转' }}
                     </button>
@@ -410,6 +451,8 @@
                       ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                       : '提交复核' }}
                   </button>
+                  <button v-if="item.can_transfer_to_quality" class="btn btn-secondary btn-sm" type="button" @click="openTransfer(item)">转交质安部</button>
+                  <span v-if="item.quality_review_handoff_id" class="handoff-badge">督导中心转交</span>
                   <template v-if="currentRole === 'station_manager' && item.can_appeal">
                     <button class="btn btn-sm appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
                     <WorkflowDeadline v-if="item.appeal_deadline_enabled" :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
@@ -472,6 +515,26 @@
     </div>
 
     <Teleport :to="tableFullscreen && overlayHostRef ? overlayHostRef : 'body'">
+    <div v-if="transferItem" class="drawer-mask">
+      <form class="drawer-panel transfer-panel" role="dialog" aria-modal="true" aria-labelledby="transfer-title" @submit.prevent="submitTransfer">
+        <div class="drawer-header">
+          <div><h3 id="transfer-title">转交质安部复核</h3><p>{{ transferItem.station }}｜问题 #{{ transferItem.id }}</p></div>
+          <button class="drawer-close" type="button" aria-label="关闭转交" :disabled="transferring" @click="transferItem = null">×</button>
+        </div>
+        <div class="drawer-content">
+          <div class="review-handoff-note"><strong>转交后由质安部处理</strong><span>事项将移出督导中心待办。转交原因会写入流转记录，并通知有权限的质安部人员。</span></div>
+          <div class="form-item">
+            <label for="quality-review-reason">转交原因</label>
+            <textarea id="quality-review-reason" ref="transferReasonInput" v-model="transferReason" rows="4" maxlength="1000" required :disabled="transferring" placeholder="请说明需要质安部进一步判断的事项"></textarea>
+          </div>
+          <p v-if="transferError" class="queue-error" role="alert">{{ transferError }}</p>
+          <div class="drawer-actions">
+            <button class="btn btn-primary" type="submit" :disabled="transferring || !transferReason.trim()">{{ transferring ? '正在转交…' : '确认转交' }}</button>
+            <button class="btn btn-secondary" type="button" :disabled="transferring" @click="transferItem = null">取消</button>
+          </div>
+        </div>
+      </form>
+    </div>
     <div v-if="flowDialog" class="drawer-mask" @click.self="closeFlowDialog">
       <div class="drawer-panel" role="dialog" aria-modal="true" aria-label="问题流转记录">
         <div class="drawer-header"><div><h3>问题流转记录</h3><p>{{ flowDialog.station }}｜问题 ID {{ flowDialog.id }}</p></div>
@@ -492,6 +555,11 @@
         </div>
 
         <div class="drawer-content" v-if="actionDrawer.item">
+          <div v-if="actionDrawer.item.quality_review_handoff_id" class="review-handoff-note">
+            <strong>督导中心转交 · {{ actionDrawer.item.quality_review_handoff_by || '复核人员' }}</strong>
+            <span>{{ actionDrawer.item.quality_review_handoff_reason }}</span>
+            <small>{{ actionDrawer.item.quality_review_handoff_at }}</small>
+          </div>
           <div class="drawer-info-card">
             <div><strong>问题描述：</strong>{{ actionDrawer.item.description }}</div>
             <div><strong>当前状态：</strong>{{ actionDrawer.item.status }}</div>
@@ -604,6 +672,8 @@
             <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction || reviewPhotoProcessing">
               <span v-if="submittingAction" class="submit-spinner" aria-hidden="true"></span>{{ submittingAction ? '正在提交，请稍候…' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
             </button>
+            <button v-if="actionDrawer.item.can_transfer_to_quality" class="btn btn-secondary" type="button"
+              :disabled="submittingAction || reviewPhotoProcessing" @click="openTransferFromReview">转交质安部</button>
             <button class="btn btn-secondary" type="button" @click="closeActionDrawer"
               :disabled="submittingAction">取消</button>
           </div>
@@ -647,7 +717,8 @@
 <script setup>
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { isSupervisorRole } from '@/utils/roles.js'
 import { canSubmitIssueQueue, reviewQueuePerspective } from '@/utils/issueQueueAccess.js'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import StationLocationReminder from '@/components/StationLocationReminder.vue'
@@ -685,6 +756,7 @@ const isInspectionSigned = (item) => {
 }
 
 const router = useRouter()
+const route = useRoute()
 const appealItem = ref(null)
 const expiredAppeals = ref(new Set())
 const appealDeadlineKey = item => `${item.id}:${item.appeal_deadline_ms}`
@@ -698,6 +770,7 @@ const appealSubmitted = () => {
 
 const props = defineProps({ queue: { type: String, required: true } })
 const accountRole = localStorage.getItem('user_role') || ''
+const isSupervisionPerspective = isSupervisorRole(accountRole)
 // Shared UI follows the independent route, not the user's role.
 const currentRole = computed(() => props.queue === 'rectification' ? 'station_manager' : accountRole)
 let queuePermissions = {}
@@ -708,7 +781,8 @@ const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager
 const myIssuesEmptyDescription = computed(() => (
   currentRole.value === 'station_manager'
     ? '目前没有需要你提交整改反馈的问题，后续新任务会在这里集中出现。'
-    : '当前可见范围内没有待复核问题，站点提交整改后符合范围的事项会自动进入这里。'
+    : accountRole === 'quality_safety' ? '当前没有符合筛选条件的转交事项；督导中心转交后会在这里显示。'
+      : '当前可见范围内没有待复核问题，站点提交整改后符合范围的事项会自动进入这里。'
 ))
 const loading = ref(false)
 const submittingAction = ref(false)
@@ -739,6 +813,7 @@ const dropdownVisible = ref({
 })
 
 const filters = ref(currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters())
+const notificationIssueId = ref('')
 const isReviewQueue = computed(() => currentRole.value !== 'station_manager')
 const appliedFilters = ref(JSON.parse(JSON.stringify(filters.value)))
 const serverTotal = ref(0), listError = ref(''), optionsError = ref(''), optionsLoading = ref(false)
@@ -776,6 +851,10 @@ function handleFullscreenChange() {
   }
 }
 function handleFullscreenKey(event) {
+  if (event.key === 'Escape' && transferItem.value) {
+    if (!transferring.value) transferItem.value = null
+    return
+  }
   if (event.key === 'Escape' && tableFullscreen.value && !document.fullscreenElement && !actionDrawer.value.visible && !previewState.value.visible && !standardDetailState.value.visible && !flowDialog.value) exitTableFullscreen()
 }
 
@@ -1215,7 +1294,7 @@ const fetchMyIssues = async ({ preserveList = false } = {}) => {
     const response = await axios.get(isReviewQueue.value ? '/api/my-review-issues' : '/api/my-rectification-issues', {
       params: isReviewQueue.value ? {
         ...reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value),
-        ...(isMobileReview.value ? { keyword: appliedFilters.value.keyword.trim() } : {}),
+        ...(isMobileReview.value ? { issue_id: notificationIssueId.value, keyword: appliedFilters.value.keyword.trim() } : {}),
       } : { user_id: userId },
       signal: listController.signal,
     })
@@ -1260,6 +1339,65 @@ const fetchReviewOptions = async () => {
     if (!axios.isCancel(error)) optionsError.value = '筛选选项暂未加载成功，请重试。'
   } finally { optionsLoading.value = false }
 }
+
+const transferItem = ref(null)
+const transferReason = ref('')
+const transferReasonInput = ref(null)
+const transferError = ref('')
+const transferring = ref(false)
+const openTransfer = async item => {
+  transferItem.value = item
+  transferReason.value = ''
+  transferError.value = ''
+  await nextTick()
+  transferReasonInput.value?.focus()
+}
+const openTransferFromReview = () => {
+  const item = actionDrawer.value.item
+  closeActionDrawer()
+  openTransfer(item)
+}
+const submitTransfer = async () => {
+  if (transferring.value || !transferItem.value || !transferReason.value.trim()) return
+  const id = transferItem.value.id
+  const position = captureIssueListPosition(pageRef.value, id)
+  transferring.value = true
+  transferError.value = ''
+  try {
+    const { data } = await axios.post('/api/issues/' + id + '/review-transfer', { reason: transferReason.value.trim() })
+    transferItem.value = null
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
+    await fetchMyIssues({ preserveList: true })
+    fetchReviewOptions()
+    await nextTick()
+    if (initialized) restoreIssueListPosition(pageRef.value, position)
+    showActionToast(data.message || '已转交质安部。', 'success')
+  } catch (error) {
+    transferError.value = error?.response?.data?.error || '转交失败，请稍后重试。'
+  } finally {
+    transferring.value = false
+  }
+}
+
+const focusNotifiedReview = value => {
+  if (!isReviewQueue.value || typeof value !== 'string' || !/^[1-9][0-9]{0,9}$/.test(value)) return false
+  notificationIssueId.value = value
+  filters.value = { ...emptyReviewFilters(), id: value }
+  return true
+}
+const clearReviewFocus = () => {
+  const { issue_id: _, ...query } = route.query
+  router.replace({ query })
+}
+watch(() => route.query.issue_id, value => {
+  if (!initialized || !isReviewQueue.value) return
+  if (focusNotifiedReview(value)) applyFilters()
+  else if (notificationIssueId.value) {
+    notificationIssueId.value = ''
+    filters.value.id = ''
+    applyFilters()
+  }
+})
 
 const fetchIssueFlowHistory = async (issueId) => {
   const requestSequence = ++flowHistoryRequestSequence
@@ -1518,6 +1656,7 @@ onMounted(() => {
   document.addEventListener('keydown', handleFullscreenKey)
   document.addEventListener('click', handleClickOutside)
   updateResponsiveState()
+  focusNotifiedReview(route.query.issue_id)
   window.addEventListener('resize', updateResponsiveState)
   appliedFilters.value = JSON.parse(JSON.stringify(filters.value))
   initialized = true
@@ -1541,6 +1680,31 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.review-overview { overflow:hidden; border:1px solid #cfdde6; border-radius:18px; background:#fff; }
+.review-overview-main { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:24px 28px; color:#fff; background:linear-gradient(112deg,#123552,#216779); }
+.review-overview-kicker { color:#b9dce6; font-size:12px; font-weight:600; letter-spacing:.08em; }
+.review-overview-main h2 { margin:7px 0 0; font-size:clamp(22px,3vw,30px); }
+.review-overview-count { flex:none; min-width:108px; padding:0 0 0 24px; border-left:1px solid #ffffff54; }
+.review-overview-count > span { color:#d9edf2; font-size:13px; }
+.review-overview-count strong { font-size:34px; line-height:1.15; font-variant-numeric:tabular-nums; }
+.review-overview-scope { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:16px 28px; background:#f7fafc; }
+.review-scope-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:#163851; }
+.review-scope-label,.handoff-badge { padding:3px 8px; border-radius:6px; background:#e5eff5; color:#285777; font-size:12px; }
+.review-overview-scope .scope-checklists { margin:0; }
+.review-overview-scope p { flex-basis:100%; margin:0; color:#425e72; font-size:13px; line-height:1.55; }
+.review-scope-details { flex-basis:100%; font-size:13px; color:#285777; }
+.review-scope-details summary { cursor:pointer; width:fit-content; }
+.review-scope-details .scope-checklists { margin-top:8px; }
+.review-handoff-note { display:grid; gap:5px; padding:12px 14px; margin-bottom:12px; border-left:3px solid #367f96; border-radius:7px; background:#eef6fa; color:#264c61; white-space:pre-wrap; overflow-wrap:anywhere; }
+.mobile-card-actions .review-handoff-note { width:100%; box-sizing:border-box; }
+.review-handoff-note span,.review-handoff-note small { font-size:13px; }
+.transfer-panel { max-width:540px; }
+@media (max-width:768px) {
+  .review-overview-main { padding:16px; gap:12px; }
+  .review-overview-count { min-width:0; padding-left:13px; }
+  .review-overview-count strong { font-size:27px; }
+  .review-overview-scope { padding:12px 16px; }
+}
 .scope-checklists { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; max-width:680px; }
 .scope-checklists > span { display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border:1px solid #cbdde8; border-radius:8px; background:#eaf3f8; color:#244e69; font-size:12px; font-weight:600; line-height:1.5; }
 .scope-checklists small { color:#64748b; font-weight:400; }

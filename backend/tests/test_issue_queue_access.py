@@ -17,6 +17,7 @@ class QueuePermissionTests(unittest.TestCase):
         client=api.app.test_client()
         for path in ('/api/my-rectification-issues','/api/my-review-issues','/api/my-review-issues/filter-options'):
             self.assertEqual(client.get(path).status_code,401)
+        self.assertEqual(client.post('/api/issues/44/review-transfer',json={'reason':'fixture'}).status_code,401)
 
     def test_default_access_preserves_existing_roles_and_opens_department_review_only(self):
         for role in api.ROLE_OPTIONS:
@@ -156,7 +157,6 @@ class QueueScopeDatabaseTests(unittest.TestCase):
           ALTER TABLE issues ADD COLUMN description text;
           ALTER TABLE issues ADD COLUMN photo_path text;
           ALTER TABLE issues ADD COLUMN rectification_note text;
-          ALTER TABLE issues ADD COLUMN rectification_at timestamp;
           ALTER TABLE issues ADD COLUMN rectification_photo_path text;
           ALTER TABLE issues ADD COLUMN is_excellent boolean DEFAULT false;
           ALTER TABLE issues ADD COLUMN audited_by int;
@@ -193,8 +193,108 @@ class QueueScopeDatabaseTests(unittest.TestCase):
             response,status=result if isinstance(result,tuple) else (result,200)
             return response.get_json(),status
 
+    def transfer(self, issue_id=44, reason='需要质安部复核'):
+        with api.app.test_request_context(f'/api/issues/{issue_id}/review-transfer', method='POST', json={'reason':reason}):
+            value=api.transfer_review_to_quality(issue_id)
+            response,status=value if isinstance(value,tuple) else (value,200)
+            return response.get_json(),status
+
+    def prepare_handoff_outbox(self):
+        self.role('supervisor_manager')
+        self.cur.execute("""
+            ALTER TABLE users ADD COLUMN account_status text DEFAULT 'active';
+            ALTER TABLE inspections ADD COLUMN station_id int DEFAULT 1, ADD COLUMN inspection_table_id int DEFAULT 1;
+            INSERT INTO users(id,username,real_name,role,account_status) VALUES
+              (18,'quality','可办理','quality_safety','active'),
+              (19,'quality_read_only','只读','quality_safety','active'),
+              (20,'inactive','停用','quality_safety','disabled'),
+              (21,'finance','财务','finance','active');
+        """)
+        for name in ('20261101_001_web_push','20261101_002_business_push'):
+            migration=importlib.import_module('migrations.versions.'+name)
+            with patch.object(migration.op,'execute',side_effect=self.cur.execute):
+                migration.upgrade()
+        self.cur.execute("""
+            INSERT INTO web_push_devices(id,user_id,device_hash,subscription_cipher,revision,platform,browser,capability,permission,active)
+            VALUES('00000000-0000-4000-8000-000000000001',18,'fixture','test-only',
+                   '00000000-0000-4000-8000-000000000002','fixture','fixture','supported','granted',true)
+        """)
+        self.admin.commit()
+
+    def test_handoff_moves_only_current_round_and_notifies_eligible_recipients_once(self):
+        from web_push_business import delivery_allowed
+        self.prepare_handoff_outbox()
+        self.assertEqual(self.transfer(45)[1],403)
+        self.assertEqual(self.transfer(reason='  ')[1],400)
+        with patch.object(api,'has_permission',side_effect=lambda _,u,key: u['id']!=19 or key!='submit_my_issue_reviews'):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                statuses=list(pool.map(lambda _:self.transfer()[1],range(2)))
+        self.assertEqual(sorted(statuses),[200,409])
+        self.cur.execute("SELECT event_key,entity_id,source FROM web_push_messages")
+        messages=self.cur.fetchall()
+        self.assertEqual(len(messages),1)
+        self.cur.execute("SELECT user_id FROM web_push_recipients")
+        self.assertEqual([row['user_id'] for row in self.cur.fetchall()],[18])
+        self.cur.execute("SELECT user_id,status FROM web_push_deliveries")
+        self.assertEqual(self.cur.fetchall(),[dict(user_id=18,status='queued')])
+        self.assertTrue(delivery_allowed(self.cur,messages[0],18,lambda *args:[18]))
+        self.assertFalse(delivery_allowed(self.cur,messages[0],18,lambda *args:[]))
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),2)
+        self.assertEqual(self.call('/api/issues/44/review',lambda:api.submit_review(44),
+                                  method='POST',data={'review_result':'整改通过'})[1],403)
+        self.role('quality_safety')
+        body,status=self.call('/api/my-review-issues',api.get_my_issues)
+        self.assertEqual(status,200,body)
+        self.assertEqual([r['id'] for r in body['items']],[44])
+        self.assertEqual(body['items'][0]['quality_review_handoff_reason'],'需要质安部复核')
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),1)
+        self.assertEqual(self.call('/api/issues/42/review',lambda:api.submit_review(42),
+                                  method='POST',data={'review_result':'整改通过'})[1],403)
+        self.assertEqual(self.transfer(42)[1],403)
+        body,status=self.call('/api/issues/44/review',lambda:api.submit_review(44),
+                              method='POST',data={'review_result':'整改不通过'})
+        self.assertEqual((status,body.get('status')),(200,'待整改'))
+        self.assertFalse(delivery_allowed(self.cur,messages[0],18,lambda *args:[18]))
+        self.cur.execute("UPDATE issues SET status='待复核',rectification_at=now() WHERE id=44")
+        self.admin.commit()
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),0)
+        self.role('supervisor')
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),3)
+        self.cur.execute("SELECT action_type FROM inspection_issue_flow_history WHERE issue_id=44 ORDER BY id")
+        self.assertEqual([r['action_type'] for r in self.cur.fetchall()],['review_transferred_to_quality','review_submitted'])
+
+    def test_handoff_rejects_no_recipients_and_rolls_back_when_outbox_fails(self):
+        self.prepare_handoff_outbox()
+        self.overrides['submit_my_issue_reviews']=False
+        self.assertEqual(self.transfer()[1],403)
+        self.overrides.clear()
+        self.cur.execute("UPDATE users SET account_status='disabled' WHERE role='quality_safety'")
+        self.admin.commit()
+        self.assertEqual(self.transfer()[1],409)
+        self.cur.execute("UPDATE users SET account_status='active' WHERE id=18")
+        self.cur.execute("ALTER TABLE web_push_messages ADD CHECK(source<>'quality_review_handoff')")
+        self.admin.commit()
+        self.assertEqual(self.transfer()[1],500)
+        self.cur.execute("SELECT quality_review_handoff_id FROM issues WHERE id=44")
+        self.assertIsNone(self.cur.fetchone()['quality_review_handoff_id'])
+        self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=44")
+        self.assertEqual(self.cur.fetchone()['n'],0)
+
+    def test_handoff_and_direct_review_cannot_both_win(self):
+        self.prepare_handoff_outbox()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            transfer=pool.submit(self.transfer)
+            review=pool.submit(self.call, '/api/issues/44/review', lambda:api.submit_review(44),
+                               method='POST', data={'review_result':'整改通过'})
+            statuses=(transfer.result()[1],review.result()[1])
+        self.assertIn(statuses,[(200,403),(409,200)])
+        self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=44")
+        self.assertEqual(self.cur.fetchone()['n'],1)
+        self.cur.execute("SELECT count(*) AS n FROM web_push_messages")
+        self.assertEqual(self.cur.fetchone()['n'],int(statuses[0]==200))
+
     def test_all_departments_get_only_their_tables_in_list_filters_and_badges(self):
-        for role,ids in [('quality_safety',{42,44}),('finance',{45}),('development_plan',{46}),
+        for role,ids in [('quality_safety',set()),('finance',{45}),('development_plan',{46}),
                          ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44,48}),
                          ('supervisor_manager',{42,44,48}),('root',{42,44,45,46,47,48})]:
             with self.subTest(role=role):
@@ -207,7 +307,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
                 self.assertEqual(status,200)
                 self.assertEqual(set(facets['filter_options']['inspection_tables']),
                                  {r['inspection_table_name'] for r in body['items']})
-                if role != 'root':
+                if role not in ('root', 'quality_safety'):
                     self.assertEqual({r['table_name'] for r in facets['scope_tables']},
                                      {r['inspection_table_name'] for r in body['items']})
                 self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),len(ids))
@@ -236,7 +336,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.cur.execute("INSERT INTO inspection_tables VALUES(7,'环境无异味管理检查表（现场）','offline',true)")
         self.cur.execute("INSERT INTO issues(id,inspection_table_id,status,rectification_result,audit_status) VALUES(49,7,'待复核','已整改','approved')")
         self.admin.commit()
-        for role, visible in [('quality_safety',True),('oil_gas',False),('supervisor',True),('supervisor_manager',True)]:
+        for role, visible in [('quality_safety',False),('oil_gas',False),('supervisor',True),('supervisor_manager',True)]:
             self.role(role)
             body,status=self.call('/api/my-review-issues?issue_id=49',api.get_my_issues)
             self.assertEqual((status,body['total']),(200,1 if visible else 0))
@@ -269,6 +369,8 @@ class QueueScopeDatabaseTests(unittest.TestCase):
     def test_rectification_filters_keep_department_scope_and_ignore_removed_tags(self):
         self.role('quality_safety')
         self.cur.execute("UPDATE issues SET rectification_result='站级无法整改' WHERE id=44")
+        for issue_id in (42, 44):
+            review_tests.mark_quality_handoff(self.cur, issue_id)
         self.admin.commit()
         for result, expected in [('已整改',set()), ('站级无法整改',{42,44})]:
             body,status=self.call('/api/my-review-issues?rectification_result='+result+'&standard_tags=["无关旧标签"]',api.get_my_issues)
@@ -311,14 +413,17 @@ class QueueScopeDatabaseTests(unittest.TestCase):
 
     def test_department_can_review_historical_table_and_records_real_actor(self):
         self.role('quality_safety')
+        review_tests.mark_quality_handoff(self.cur, 44)
+        self.admin.commit()
         body,status=self.call('/api/issues/44/review',lambda:api.submit_review(44),method='POST',
             data={'review_result':'整改通过'})
         self.assertEqual((status,body.get('status')),(200,'已闭环'))
-        self.cur.execute('SELECT actor_user_id,actor_role,result FROM inspection_issue_flow_history WHERE issue_id=44')
+        self.cur.execute("SELECT actor_user_id,actor_role,result FROM inspection_issue_flow_history WHERE issue_id=44 AND action_type='review_submitted'")
         self.assertEqual(dict(self.cur.fetchone()),dict(actor_user_id=17,actor_role='quality_safety',result='整改通过'))
-        self.assertTrue(api.can_user_view_issue_flow_history(self.cur,self.user,dict(inspection_table_id=2)))
 
     def test_audit_failure_rolls_back_department_review(self):
+        self.role('quality_safety')
+        review_tests.mark_quality_handoff(self.cur, 44)
         self.cur.execute("ALTER TABLE inspection_issue_flow_history ADD CHECK(issue_id<>44) NOT VALID")
         self.admin.commit()
         body,status=self.call('/api/issues/44/review',lambda:api.submit_review(44),method='POST',
@@ -328,11 +433,14 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.assertEqual(dict(self.cur.fetchone()),dict(status='待复核',review_result=None))
 
     def test_concurrent_department_reviews_only_write_one_result_and_event(self):
+        self.role('quality_safety')
+        review_tests.mark_quality_handoff(self.cur, 44)
+        self.admin.commit()
         def submit(_):
             return self.call('/api/issues/44/review',lambda:api.submit_review(44),method='POST',
                              data={'review_result':'整改通过'})[1]
         with ThreadPoolExecutor(max_workers=2) as pool:
             statuses=list(pool.map(submit,range(2)))
-        self.assertEqual(sorted(statuses),[200,400])
+        self.assertEqual(sorted(statuses),[200,403])
         self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=44 AND action_type='review_submitted'")
         self.assertEqual(self.cur.fetchone()['n'],1)

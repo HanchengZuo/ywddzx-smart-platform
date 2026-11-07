@@ -778,7 +778,7 @@ const scopedPermissionLayouts = {
   '我的待复核问题': {
     scopeKeys: ['view_my_review_issues'], actionKeys: ['submit_my_issue_reviews'],
     readonlyItems: [{ key: 'review_queue_scope', name: '按角色固定范围，不可跨部门扩大',
-      description: '两类督导组账号共用督导中心视角，不参与设备设施、现场明细和财务检查表复核。质安部（计量、无异味、质量安全环保）、发展计划部（设备设施）、油气事业部（现场明细）、非油事业部（非油现场及团购）、财务部（财务）按本部门范围复核，含历史版本；无异味仅归质安部。Root仍可查看全部，查看和提交可分别关闭。' }]
+      description: '两类督导组账号共用督导中心视角，可将质安部所属待复核事项转交质安部。质安部仅处理已转交事项；其他处室及历史版本分工不变。Root仍可查看全部，查看和提交可分别关闭。' }]
   },
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],

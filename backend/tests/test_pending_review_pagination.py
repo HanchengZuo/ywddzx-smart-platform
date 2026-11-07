@@ -48,6 +48,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 stack.enter_context(patch('app.get_authenticated_request_user_id', return_value=7))
                 stack.enter_context(patch('app.has_permission', side_effect=lambda _, user, key: api.role_default_permission(user['role'], key)))
                 stack.enter_context(patch('app.review_queue_table_ids',return_value=None))
+                stack.enter_context(patch('app.get_role_default_inspection_table_ids',return_value=[]))
                 conn = MagicMock(); cur = conn.cursor.return_value
                 cur.fetchone.side_effect = [{'id': 7, 'role': role}, {'total': 11}]
                 cur.fetchall.return_value = [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}]
@@ -71,7 +72,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 self.assertEqual(result['items'][0]['checklist_mode'],'online')
                 self.assertEqual(params[-2:], [5, 10])
                 self.assertEqual(params[:-2], ['%接地%', '%接地%'])
-                self.assertEqual(tags.call_args.args[1], [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}])
+                self.assertEqual(tags.call_args.args[1][0]['id'], 1)
                 conn.commit.assert_not_called()
 
     def test_invalid_keyword_has_clear_error_and_does_not_query_the_queue(self):

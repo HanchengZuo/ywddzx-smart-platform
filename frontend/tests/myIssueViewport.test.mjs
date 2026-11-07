@@ -108,7 +108,8 @@ test('post-review refresh retains list height throughout network wait and on err
       const context = {
         localStorage: { getItem: () => '17' }, listSequence: 0, listController: null, AbortController,
         isReviewQueue: { value: true }, isMobileReview: { value: true }, issues, loading, listError,
-        page, pageSize: { value: 5 }, appliedFilters: { value: { keyword: '' } }, serverTotal: { value: 2 }, acceptingPage: false,
+        page, pageSize: { value: 5 }, appliedFilters: { value: { keyword: '' } }, notificationIssueId: { value: '' },
+        serverTotal: { value: 2 }, acceptingPage: false,
         reviewRequestParams: () => ({}), mobileReviewFilters: value => value, showActionToast: () => {},
         axios: { get: () => request, isCancel: () => false }, preserveList,
       }

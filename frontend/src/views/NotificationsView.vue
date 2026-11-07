@@ -180,8 +180,8 @@
               查看今日安排
             </button>
             <RouterLink
-              v-if="businessPath(item)"
-              :to="businessPath(item)"
+              v-if="businessNotificationPath(item)"
+              :to="businessNotificationPath(item)"
               class="notification-action-link"
               >前往办理</RouterLink
             >
@@ -213,7 +213,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { notificationMessageId } from '../utils/notificationTarget'
+import { businessNotificationPath, notificationMessageId } from '../utils/notificationTarget'
 import axios from 'axios'
 import {
   pushCapability,
@@ -236,11 +236,6 @@ watch(deletingDevice, async (value) => {
 })
 const focusedMessage = ref('')
 let resolvedMessage = ''
-const businessPath = (item) =>
-  item.kind === 'business' &&
-  ['/inspection/appeals', '/inspection/records'].includes(item.action_path)
-    ? item.action_path
-    : ''
 const items = ref([]),
   pushReady = ref(false),
   devices = ref([]),
