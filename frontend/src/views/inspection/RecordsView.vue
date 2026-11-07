@@ -348,7 +348,7 @@
                   </td>
                 </tr>
                 <tr v-for="(record, index) in batch.records" :key="record.id"
-                  :class="getRecordTableRowClasses(index)">
+                  class="data-row-guide" :class="getRecordTableRowClasses(index)">
                   <td v-if="index === 0" :rowspan="batch.rowspan"
                     class="batch-merged-cell batch-main-cell batch-date-cell">
                     <div class="batch-date-content">
@@ -3054,14 +3054,6 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.records-table tbody tr {
-  transition: background 0.18s ease;
-}
-
-.records-table tbody tr:not(.station-divider-row):hover td {
-  background: #f8fbff;
 }
 
 .station-divider-row td {

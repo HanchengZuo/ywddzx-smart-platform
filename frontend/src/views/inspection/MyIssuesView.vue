@@ -381,7 +381,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in paginatedData" :key="item.id" :data-issue-id="item.id">
+              <tr v-for="item in paginatedData" :key="item.id" class="data-row-guide" :data-issue-id="item.id">
                 <td v-if="isMyIssueColumnVisible('id')">{{ item.id }}</td>
                 <td v-if="isMyIssueColumnVisible('month')">{{ item.month || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('time')" class="nowrap-col">{{ item.time || '暂无' }}</td>

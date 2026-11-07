@@ -55,7 +55,7 @@
             <th v-for="column in columns" :key="column.key" scope="col">{{ column.label }}</th>
             <th scope="col">待完成</th><th scope="col">明细</th>
           </tr></thead>
-          <tbody><tr v-for="person in rows" :key="person.id">
+          <tbody><tr v-for="person in rows" :key="person.id" class="data-row-guide">
             <th scope="row" class="person">
               <span class="avatar" aria-hidden="true">{{ person.name.slice(0, 1) }}</span>
               <span><strong>{{ person.name }}</strong><small v-if="person.position">{{ person.position }}</small></span>
@@ -278,7 +278,7 @@ onBeforeUnmount(() => { listRequest?.abort(); detailRequest?.abort() })
 .task-table thead { background:#173a52; color:#fff }
 .task-table th,.task-table td { padding:10px 9px }.task-table th:first-child { padding-left:18px }.task-table td:last-child { padding-right:18px }
 .task-table tbody tr:nth-child(even) { background:#f7fafc }
-.task-table tbody tr + tr { border-top:1px solid #e5edf3 }.task-table tbody tr:hover { background:#eef7f8 }
+.task-table tbody tr + tr { border-top:1px solid #e5edf3 }
 .person { white-space:nowrap }
 .person > span:last-child { display:inline-grid; gap:3px; vertical-align:middle; text-align:left }
 .person small,.cell-numbers small,.muted { color:#516a7d; font-weight:500 }
