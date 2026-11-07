@@ -587,7 +587,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in paginatedData" :key="item.id" :class="issueAuditRowClass(item)">
+              <tr v-for="item in paginatedData" :key="item.id" class="data-row-guide" :class="issueAuditRowClass(item)">
                 <td v-if="isIssueColumnVisible('id')" class="nowrap issue-id-cell">{{ item.id }}</td>
                 <td v-if="isIssueColumnVisible('month')" class="nowrap">{{ item.month }}</td>
                 <td v-if="isIssueColumnVisible('time')" class="nowrap">{{ item.time }}</td>
@@ -5044,14 +5044,6 @@ onBeforeUnmount(() => {
 
 .issues-table tr.issue-audit-rejected td {
   background: rgba(254, 242, 242, 0.9);
-}
-
-.issues-table tr.issue-audit-approved:hover td {
-  background: rgba(220, 252, 231, 0.9);
-}
-
-.issues-table tr.issue-audit-rejected:hover td {
-  background: rgba(254, 226, 226, 0.92);
 }
 
 .issue-id-cell {

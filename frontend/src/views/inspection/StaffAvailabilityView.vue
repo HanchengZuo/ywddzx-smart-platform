@@ -1,10 +1,10 @@
 <template>
   <div class="staff-page">
-    <header class="staff-head surface">
+    <header class="staff-head surface" :class="{ 'staff-head--compact': compact }">
       <div>
-        <span class="kicker">排班系统 / STAFF AVAILABILITY</span>
+        <span class="kicker">排班系统<span class="staff-kicker-en"> / STAFF AVAILABILITY</span></span>
         <h2>人员档期</h2>
-        <p>谁有空、谁在现场、谁做视频，一眼看清本周安排。</p>
+        <p v-if="!compact">谁有空、谁在现场、谁做视频，一眼看清本周安排。</p>
       </div>
       <div class="head-meta">
         <div class="head-actions">
@@ -17,10 +17,10 @@
           />
           <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
         </div>
-        <small>工作日排班 · 全局共享</small>
+        <small v-if="!compact">工作日排班 · 全局共享</small>
       </div>
     </header>
-    <section class="surface staff-board">
+    <section class="surface staff-board" :class="{ 'staff-board--compact': compact }">
       <div class="week-controls">
         <div class="week-picker">
           <button type="button" aria-label="查看上一周" @click="moveWeek(-7)">← 上一周</button>
@@ -30,31 +30,41 @@
         </div>
         <div class="week-caption">
           <strong>{{ weekCaption }}</strong>
-          <small>{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
+          <small v-if="!compact">{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
+        </div>
+        <div class="board-mode" role="group" aria-label="档期显示模式">
+          <button type="button" :aria-pressed="!compact" @click="setCompact(false)">全量模式</button>
+          <button type="button" :aria-pressed="compact" @click="setCompact(true)">极简模式</button>
         </div>
       </div>
       <div v-if="board" class="staff-stats" :aria-label="'今日档期概况 · ' + board.today">
         <div v-for="item in summaryItems" :key="item.key" :class="'stat-' + item.key">
           <span>{{ item.label }}</span
           ><strong>{{ stats[item.key] }}</strong
-          ><small>{{ item.hint }}</small>
+          ><small v-if="!compact">{{ item.hint }}</small>
         </div>
       </div>
       <div class="legend" aria-label="档期颜色说明">
         <span v-for="item in legendItems" :key="item.key" :class="'tone-' + item.key"
-          ><i></i>{{ item.label }}</span
+          ><i></i>{{ compact && item.key === 'mixed' ? '双项（现场 + 视频）' : item.label }}</span
         >
-        <small>{{
+        <small v-if="compact">
+          <span class="compact-mixed-key">双项＝现场 + 视频 · </span>“实”表示有实绩 · 点击单格看详情
+        </small>
+        <small v-else>{{
           board?.actuals_pending
             ? '今日按计划排班 · 上海时间 17:00 后展示实绩'
             : '“已排班”为计划，“实绩”为实际巡检记录'
         }}</small>
       </div>
-      <p class="help">
-        仅展示官方工作日（含调休上班日）。当天未设置默认有空，提前设置的没空及原因不变。上海时间
-        17:00 前档期单元格按计划展示，17:00
-        后自动核对实绩，现场有记录即可，视频须在巡检记录中确认完成。外勤分组如在派工后已有组员登记对应任务的巡检记录，则即时锁定成员调整，不等待17:00。原分组与派工保留，实绩和历史派工只读；不影响其他页面实时记录和任务销项。
-      </p>
+      <details class="staff-help" :open="!compact">
+        <summary>档期口径与说明</summary>
+        <p>
+          仅展示官方工作日（含调休上班日）。当天未设置默认有空，提前设置的没空及原因不变。上海时间
+          17:00 前档期单元格按计划展示，17:00
+          后自动核对实绩，现场有记录即可，视频须在巡检记录中确认完成。外勤分组如在派工后已有组员登记对应任务的巡检记录，则即时锁定成员调整，不等待17:00。原分组与派工保留，实绩和历史派工只读；不影响其他页面实时记录和任务销项。
+        </p>
+      </details>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
       </p>
@@ -71,41 +81,47 @@
       </div>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
       <p v-if="loading && !board" role="status" class="empty">正在读取人员档期…</p>
-      <div v-else-if="board?.days.length" class="staff-grid" :aria-busy="loading">
+      <div
+        v-else-if="board?.days.length"
+        class="staff-grid"
+        :class="compact ? 'staff-grid--compact' : 'staff-grid--full'"
+        :style="compact ? { '--staff-day-count': board.days.length } : null"
+        :aria-busy="loading"
+      >
         <table>
           <caption class="sr-only">
             人员工作日档期。逐个单元格设置，无批量操作。
           </caption>
           <colgroup>
             <col class="name-col" />
-            <col class="position-col" />
+            <col v-if="!compact" class="position-col" />
             <col v-for="day in board.days" :key="day.day" />
           </colgroup>
           <thead>
             <tr>
-              <th scope="col">姓名 / 日期</th>
-              <th scope="col">岗位</th>
+              <th scope="col">{{ compact ? '姓名' : '姓名 / 日期' }}</th>
+              <th v-if="!compact" scope="col">岗位</th>
               <th
                 v-for="day in board.days"
                 :key="day.day"
                 scope="col"
                 :class="{ today: day.day === board.today }"
               >
-                <b>{{ day.day.slice(5).replace('-', ' / ') }}</b>
+                <b>{{ day.day.slice(5).replace('-', compact ? '/' : ' / ') }}</b>
                 <small>{{ day.weekday }}<em v-if="day.day === board.today">今天</em></small>
               </th>
             </tr>
           </thead>
           <tbody v-for="group in staffGroups" :key="group.label">
             <tr class="staff-divider">
-              <th :colspan="board.days.length + 2" scope="rowgroup">
+              <th :colspan="board.days.length + (compact ? 1 : 2)" scope="rowgroup">
                 {{ group.label }}<span>{{ group.people.length }} 人</span>
               </th>
             </tr>
             <tr
               v-for="person in group.people"
               :key="person.display_name"
-              class="staff-person-row"
+              class="staff-person-row data-row-guide"
               :class="{ 'is-self': isCurrentPerson(person, board.current_user_id) }"
             >
               <th scope="row" class="person-name">
@@ -116,7 +132,7 @@
                   ><small v-if="!person.id">待匹配账号</small></span
                 >
               </th>
-              <td class="position">
+              <td v-if="!compact" class="position">
                 <span :class="{ manager: person.position === '管理人员' }">{{
                   person.position
                 }}</span>
@@ -137,24 +153,31 @@
                   ]"
                   :disabled="loading || !!error"
                   :aria-label="
-                    person.display_name + '，' + day.day + '，' + state(person, day).label
+                    person.display_name + '，' + day.day + '，' + state(person, day).label + '，' + state(person, day).stage
                   "
+                  :title="compact ? compactCellTitle(person, day) : undefined"
                   @click="openCell(person, day)"
                 >
-                  <small class="mobile-date">{{ day.day.slice(5) }} {{ day.weekday }}</small>
-                  <span class="cell-stage"
-                    ><i></i>{{ state(person, day).stage
-                    }}<em v-if="person.cells[day.day].read_only">只读</em></span
-                  >
-                  <b>{{ state(person, day).label }}</b>
-                  <small
-                    v-if="person.cells[day.day].field_group_names?.length"
-                    class="field-group-label"
-                  >
-                    {{ person.cells[day.day].has_actual ? '原安排：' : ''
-                    }}{{ person.cells[day.day].field_group_names.join('、') }}
-                  </small>
-                  <small class="cell-detail">{{ state(person, day).detail || '—' }}</small>
+                  <template v-if="compact">
+                    <b>{{ compactLabels[state(person, day).tone] || state(person, day).label }}</b>
+                    <span v-if="state(person, day).stage === '实绩'" class="actual-mark" aria-hidden="true">实</span>
+                  </template>
+                  <template v-else>
+                    <small class="mobile-date">{{ day.day.slice(5) }} {{ day.weekday }}</small>
+                    <span class="cell-stage"
+                      ><i></i>{{ state(person, day).stage
+                      }}<em v-if="person.cells[day.day].read_only">只读</em></span
+                    >
+                    <b>{{ state(person, day).label }}</b>
+                    <small
+                      v-if="person.cells[day.day].field_group_names?.length"
+                      class="field-group-label"
+                    >
+                      {{ person.cells[day.day].has_actual ? '原安排：' : ''
+                      }}{{ person.cells[day.day].field_group_names.join('、') }}
+                    </small>
+                    <small class="cell-detail">{{ state(person, day).detail || '—' }}</small>
+                  </template>
                 </button>
               </td>
             </tr>
@@ -162,7 +185,7 @@
         </table>
       </div>
       <p v-else-if="board" class="empty">此周没有已发布的工作日。</p>
-      <footer class="staff-footer">
+      <footer v-if="!compact" class="staff-footer">
         <strong>逐格维护 · 修改留痕</strong>
         <span
           >档期与排班由所有获授权用户共享。对应任务未产生实绩时可调整分组或标记没空，系统同步所选日期的排班与个人待办；历史记录保留。</span
@@ -310,6 +333,23 @@ import { actualsRefreshDelay } from '@/utils/staffActuals'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
 import StaffDispatchDetails from '@/components/StaffDispatchDetails.vue'
 import TransientNotice from '@/components/TransientNotice.vue'
+let displayModeKey
+const compact = ref(false)
+try {
+  displayModeKey = `staff-availability:display-mode:${localStorage.getItem('user_id') || 'anonymous'}`
+  compact.value = localStorage.getItem(displayModeKey) === 'compact'
+} catch {
+  // The switch still works when browser storage is unavailable.
+}
+function setCompact(value) {
+  compact.value = value
+  try {
+    if (displayModeKey) localStorage.setItem(displayModeKey, value ? 'compact' : 'full')
+  } catch {
+    // Keep the current selection for this visit.
+  }
+}
+const compactLabels = { offline: '现场', online: '视频', mixed: '双项', past: '无记录' }
 const warningToast = ref(''),
   warningSequence = ref(0)
 function warn(message) {
@@ -381,6 +421,10 @@ const stats = computed(() => staffTodaySummary(board.value))
 const weekCaption = computed(() => (board.value ? board.value.week + ' 起的一周' : '工作日档期'))
 function state(person, day) {
   return staffCellPresentation(person.cells[day.day], day.day, board.value.today)
+}
+function compactCellTitle(person, day) {
+  const current = state(person, day)
+  return [current.stage, current.label, current.detail].filter(Boolean).join(' · ')
 }
 async function load() {
   if (blocked.value || disposed) return
@@ -666,7 +710,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .staff-person-row.is-self .person-name {
-  box-shadow: inset 4px 0 #12858a;
+  --row-guide-rest-shadow: inset 4px 0 #12858a;
+  --row-guide-marker: var(--row-guide-rest-shadow);
   background: #e8f7f4;
 }
 .staff-cell.is-self {
@@ -905,11 +950,39 @@ h2 {
   --tone-ink: #8394a3;
   --tone-line: #e5eaf0;
 }
-.help {
+.staff-help {
   margin: 12px 22px;
   color: #60778d;
   font-size: 12px;
   line-height: 1.9;
+}
+.staff-help summary {
+  width: fit-content;
+  color: #365775;
+  cursor: pointer;
+  font-weight: 600;
+}
+.staff-help p {
+  margin: 6px 0 0;
+}
+.board-mode {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #cbd9e7;
+  border-radius: 9px;
+  background: #eef3f8;
+}
+.board-mode button {
+  background: transparent;
+  border-color: transparent;
+  padding: 7px 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.board-mode button[aria-pressed='true'] {
+  background: #1e5575;
+  color: #fff;
 }
 .warning,
 .error,
@@ -1130,9 +1203,6 @@ thead .today {
 }
 .staff-cell.is-actual {
   border-top: 2px solid var(--tone);
-}
-tbody tr:hover .person-name {
-  background: #e8eff7;
 }
 .mobile-date {
   display: none;
@@ -1430,31 +1500,31 @@ input {
     margin-left: 0;
     width: 100%;
   }
-  .help,
+  .staff-help,
   .warning,
   .error,
   .notice {
     margin: 12px 16px;
   }
-  .staff-grid {
+  .staff-grid--full {
     padding: 12px;
     background: #eef3f8;
   }
-  .staff-grid table,
-  .staff-grid tbody {
+  .staff-grid--full table,
+  .staff-grid--full tbody {
     display: block;
   }
-  .staff-grid colgroup {
+  .staff-grid--full colgroup {
     display: none;
   }
-  .staff-grid thead {
+  .staff-grid--full thead {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .staff-grid tr {
+  .staff-grid--full tr {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
@@ -1465,12 +1535,12 @@ input {
     margin-bottom: 12px;
     box-shadow: 0 3px 8px #18324c08;
   }
-  .staff-grid th,
-  .staff-grid td {
+  .staff-grid--full th,
+  .staff-grid--full td {
     border: 0;
     min-width: 0;
   }
-  .staff-grid .staff-divider {
+  .staff-grid--full .staff-divider {
     display: block;
     padding: 0;
     background: transparent;
@@ -1479,26 +1549,25 @@ input {
     border-radius: 0;
     margin: 12px 0;
   }
-  .staff-grid .staff-divider th {
+  .staff-grid--full .staff-divider th {
     display: block;
     padding: 10px 6px;
     background: none;
     border-bottom: 2px solid #8db0c7;
   }
-  .person-name,
-  .position {
+  .staff-grid--full .person-name,
+  .staff-grid--full .position {
     padding: 2px 2px 6px;
     background: #fff;
   }
-  .position {
+  .staff-grid--full .position {
     text-align: right;
   }
-  .day-cell,
-  .today-cell {
+  .staff-grid--full .day-cell {
     padding: 0;
     background: none;
   }
-  .staff-cell {
+  .staff-grid--full .staff-cell {
     min-height: 104px;
   }
   .mobile-date {
@@ -1531,6 +1600,144 @@ input {
   }
   .week-picker input {
     flex: 1;
+  }
+}
+.staff-head--compact {
+  padding-block: 12px;
+}
+.staff-head--compact h2 {
+  margin: 4px 0 0;
+  font-size: 24px;
+}
+.staff-board--compact .week-controls {
+  gap: 8px 12px;
+  padding-block: 10px;
+}
+.staff-board--compact .week-caption {
+  margin-inline-start: auto;
+}
+.staff-board--compact .staff-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+  border: 0;
+}
+.staff-board--compact .staff-stats > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+}
+.staff-board--compact .staff-stats strong {
+  font-size: 14px;
+}
+.staff-board--compact .legend {
+  padding-block: 6px;
+  gap: 4px 12px;
+}
+.staff-board--compact .staff-help {
+  margin-block: 5px;
+}
+.compact-mixed-key {
+  display: none;
+}
+.staff-grid--compact table {
+  min-width: calc(78px + 44px * var(--staff-day-count));
+}
+.staff-grid--compact .name-col {
+  width: clamp(78px, 15%, 148px);
+}
+.staff-grid--compact thead th {
+  height: 36px;
+}
+.staff-grid--compact thead th b {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.staff-grid--compact thead small {
+  margin-top: 2px;
+}
+.staff-grid--compact .staff-divider th {
+  padding: 4px 10px;
+  border-top-width: 2px;
+  font-size: 11px;
+}
+.staff-grid--compact .person-name {
+  padding: 2px 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.staff-grid--compact .person-name small {
+  margin-top: 0;
+}
+.staff-grid--compact .self-badge {
+  padding: 0 3px;
+  margin-left: 3px;
+  font-size: 9px;
+}
+.staff-grid--compact .day-cell {
+  padding: 2px 3px;
+}
+.staff-grid--compact .staff-cell {
+  min-height: 26px;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px;
+  border-radius: 4px;
+  border-left-width: 2px;
+  white-space: nowrap;
+}
+.staff-grid--compact .staff-cell b {
+  font-size: 11px;
+}
+.actual-mark {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--tone-ink);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.3;
+}
+@container (max-width: 760px) {
+  .staff-head--compact {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding-inline: 14px;
+  }
+  .staff-head--compact h2 {
+    font-size: 20px;
+    letter-spacing: 0;
+  }
+  .staff-head--compact .staff-kicker-en,
+  .staff-board--compact .legend > span {
+    display: none;
+  }
+  .compact-mixed-key {
+    display: inline;
+  }
+  .staff-grid--compact {
+    overflow-x: auto;
+  }
+  .staff-grid--compact thead th {
+    position: static;
+  }
+  .staff-grid--compact thead em {
+    display: none;
+  }
+  .staff-grid--compact .day-cell {
+    padding-inline: 1px;
+  }
+  .staff-grid--compact .staff-cell {
+    min-height: 32px;
+  }
+  .staff-board--compact .week-caption {
+    margin-inline-start: 0;
   }
 }
 </style>
