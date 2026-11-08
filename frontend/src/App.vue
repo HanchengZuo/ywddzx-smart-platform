@@ -663,7 +663,7 @@ import { schedulingMenuPages } from './config/schedulingCatalog'
 import { certificatePages, canAccessCertificates } from './config/certificateCatalog'
 import { reportPerspective } from './utils/reportAccess'
 import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
-import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
+import { AREA_ROLE_LABELS, isAreaRole, isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import { canAccessIssueQueue, issueQueuePaths } from './utils/issueQueueAccess.js'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
@@ -967,7 +967,7 @@ const isDevelopmentPlan = computed(() => authState.role === 'development_plan')
 const isOilGas = computed(() => authState.role === 'oil_gas')
 const isNonOil = computed(() => authState.role === 'non_oil')
 const isFinance = computed(() => authState.role === 'finance')
-const isAreaAccount = computed(() => authState.role === 'area_account')
+const isAreaAccount = computed(() => isAreaRole(authState.role))
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const isPageVisible = (path) => pageVisibilitySettings.value[path] !== false
 const visibleOperationsPages = computed(() => operationsMenuPages.filter(page => hasPermissionKey(page.permission) && isPageVisible(page.path)))
@@ -1052,7 +1052,7 @@ const currentRoleLabel = computed(() => {
   if (authState.role === 'oil_gas') return '油气事业部账号'
   if (authState.role === 'non_oil') return '非油事业部账号'
   if (authState.role === 'finance') return '财务部账号'
-  if (authState.role === 'area_account') return '片区账号'
+  if (isAreaRole(authState.role)) return AREA_ROLE_LABELS[authState.role]
   return '站点账号'
 })
 const sidebarTitle = computed(() => {

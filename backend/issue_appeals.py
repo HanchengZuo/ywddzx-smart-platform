@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta
 from flask import g, jsonify, request
 from quality_deadlines import initialize_appeal_review, capture_quality_handoff, responsible_users
 from web_push_business import notify_appeal
+from area_roles import AREA_ROLES, is_area_specialist
 
 ACTIVE = ('area_pending', 'quality_pending')
 APPEAL_LABELS = {
@@ -39,8 +40,12 @@ def can_decide(core, cur, user, appeal):
 def appeal_scope(core, cur, user):
     if user.get('role') == 'station_manager':
         return ['i.station_id = %s'], [user.get('station_id')]
-    if user.get('role') == 'area_account':
-        return ["COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区') = ANY(%s)"], [list(area_regions(core, cur, user))]
+    if user.get('role') in AREA_ROLES:
+        where, params = ["COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区') = ANY(%s)"], [list(area_regions(core, cur, user))]
+        if is_area_specialist(user.get('role')) and not core.append_inspection_table_scope_filter(
+                cur, user, where, params, 'i.inspection_table_id', 'limit_issue_inspection_table_scope'):
+            where.append('FALSE')
+        return where, params
     if core.is_root_user(user) or user.get('role') == 'quality_safety':
         return [], []
     return core.build_issue_list_visibility_scope(cur, user)

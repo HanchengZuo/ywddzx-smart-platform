@@ -214,6 +214,7 @@
   </div>
 </template>
 <script setup>
+import { AREA_ROLE_LABELS } from '@/utils/roles'
 import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import axios from 'axios'
 import { pushDeviceStatus } from '../../utils/webPush'
@@ -265,7 +266,7 @@ const roleLabel = (value) =>
     supervisor_manager: '督导组管理人员',
     supervisor: '督导组组员',
     station_manager: '站点',
-    area_account: '片区',
+    ...AREA_ROLE_LABELS,
     quality_safety: '质安部',
     non_oil: '非油事业部',
     oil_gas: '油气事业部',

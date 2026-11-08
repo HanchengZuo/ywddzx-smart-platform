@@ -1,0 +1,122 @@
+"""Regional specialists are restricted by both dimensions, including direct access."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+from uuid import uuid4
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+import app as api
+from area_roles import AREA_SPECIALIST_DEPARTMENTS, require_specialist_region, specialist_can_read_media
+from issue_appeals import appeal_scope, can_decide
+
+
+class AreaPolicyTests(unittest.TestCase):
+    def test_existing_role_stays_compatible(self):
+        self.assertEqual(api.ROLE_LABELS['area_account'], '片区经理')
+        self.assertFalse(api.role_default_permission('area_account', 'limit_issue_inspection_table_scope'))
+        self.assertTrue(api.role_default_permission('area_account', 'limit_issue_station_region_scope'))
+
+    def test_specialists_require_one_region(self):
+        key = 'limit_issue_station_region_scope'
+        for role in AREA_SPECIALIST_DEPARTMENTS:
+            self.assertEqual(api.normalize_user_role(role), role)
+            for regions in ([], ['浦东', '松金']):
+                with self.assertRaises(ValueError):
+                    require_specialist_region(role, {key: regions})
+            require_specialist_region(role, {key: ['浦东']})
+
+    def test_authenticated_requests_cannot_bypass_scope_with_other_apis(self):
+        user = {'id': 17, 'role': 'area_safety'}
+        with patch.object(api, 'verify_auth_token', return_value=(user, {})), \
+             patch.object(api, 'touch_online_user_presence'), patch.object(api, 'start_backup_scheduler_once'):
+            client = api.app.test_client()
+            headers = {'Authorization': 'Bearer fixture'}
+            for path in ('/api/stations', '/api/inspection-table-standards?table_id=1',
+                         '/api/inspection-reports/status', '/api/my-review-issues'):
+                self.assertEqual(client.get(path, headers=headers).status_code, 403)
+            self.assertEqual(client.post('/api/issue-appeals/5/decision', headers=headers).status_code, 403)
+
+
+@unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')
+class AreaScopeDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        config = api.get_db_config()
+        if not config['dbname'].startswith('test_schedule_'):
+            raise RuntimeError('Refusing non-test database')
+        self.conn = psycopg2.connect(**config, cursor_factory=RealDictCursor)
+        self.addCleanup(self.conn.close)
+        self.cur = self.conn.cursor()
+        self.schema = 'area_roles_' + uuid4().hex
+        self.cur.execute(f'CREATE SCHEMA {self.schema}; SET LOCAL search_path TO {self.schema}')
+        self.cur.execute("""
+            CREATE TABLE inspection_tables(id int, table_name text, checklist_mode text, is_active bool);
+            INSERT INTO inspection_tables VALUES
+                (1,'现场检查明细表（现场）','offline',true),
+                (2,'非油检查表（现场）','offline',true),
+                (3,'质量安全环保检查表（视频）','online',true),
+                (4,'质量安全环保检查表（现场）','offline',false),
+                (5,'财务检查表（现场）','offline',true);
+            CREATE TABLE user_station_region_scopes(user_id int, scope_key text, station_region text);
+            INSERT INTO user_station_region_scopes VALUES
+                (17,'limit_issue_station_region_scope','浦东'),
+                (17,'limit_record_station_region_scope','松金');
+            CREATE TABLE stations(id int, region text);
+            INSERT INTO stations VALUES(1,'浦东'),(2,'松金');
+            CREATE TABLE inspections(id int, inspector_id int);
+            INSERT INTO inspections VALUES(1,8);
+            CREATE TABLE issues(id int, station_id int, inspection_id int, inspection_table_id int,
+                inspector_id int, audit_status text, photo_path text,
+                rectification_photo_path text, review_photo_path text);
+            INSERT INTO issues
+                SELECT s.id*100+t.id,s.id,1,t.id,8,'approved','/issues/'||s.id||'-'||t.id||'.jpg',NULL,NULL
+                FROM stations s CROSS JOIN inspection_tables t;
+            INSERT INTO issues VALUES(999,1,1,3,8,'pending','issues/pending.jpg',NULL,NULL);
+            CREATE TABLE inspection_issue_flow_history(issue_id int, photo_path text);
+            CREATE TABLE inspection_highlights(station_id int, inspection_table_id int, audit_status text, photo_path text);
+            INSERT INTO inspection_highlights VALUES(1,3,'approved','issues/highlight.jpg');
+        """)
+        self.enterContext(patch.object(api, 'USER_SECURITY_SCHEMA_READY', True))
+        overrides = {'view_all_inspection_issues': True, 'view_all_inspection_records': True,
+                     'limit_issue_inspection_table_scope': False, 'limit_issue_station_region_scope': False,
+                     'manage_users': True, 'submit_my_issue_reviews': True}
+        self.enterContext(patch.object(api, 'get_role_permission_overrides', return_value=overrides))
+        self.enterContext(patch.object(api, 'get_permission_overrides', return_value=overrides))
+
+    def test_list_filters_and_direct_media_include_history_without_leaking(self):
+        for role, expected in {'area_oil_gas': [101], 'area_non_oil': [102], 'area_safety': [103, 104]}.items():
+            user = {'id': 17, 'role': role}
+            with self.subTest(role=role):
+                self.assertFalse(api.has_permission(self.cur, user, 'manage_users'))
+                self.assertFalse(api.can_view_review_queue(self.cur, user))
+                where, params = api.build_issue_list_visibility_scope(self.cur, user)
+                self.cur.execute('SELECT i.id FROM issues i JOIN stations s ON s.id=i.station_id '
+                                 'JOIN inspections ins ON ins.id=i.inspection_id WHERE '
+                                 + ' AND '.join(where) + ' ORDER BY i.id', params)
+                self.assertEqual([row['id'] for row in self.cur.fetchall()], expected)
+                regions = api.get_effective_station_region_scope_values(self.cur, user, 'limit_record_station_region_scope')
+                tables = api.get_effective_inspection_table_scope_ids(self.cur, user, 'limit_record_inspection_table_scope')
+                self.assertEqual(regions, {'浦东'})
+                self.assertTrue(specialist_can_read_media(self.cur, f'issues/1-{expected[0]-100}.jpg', regions, tables))
+                self.assertFalse(specialist_can_read_media(self.cur, f'issues/2-{expected[0]-100}.jpg', regions, tables))
+                self.assertFalse(specialist_can_read_media(self.cur, 'issues/1-5.jpg', regions, tables))
+                self.assertFalse(specialist_can_read_media(self.cur, 'issues/pending.jpg', regions, tables))
+                self.assertEqual(specialist_can_read_media(self.cur, 'issues/highlight.jpg', regions, tables), role == 'area_safety')
+
+    def test_appeals_intersect_scope_without_granting_review_authority(self):
+        core = SimpleNamespace(**vars(api))
+        user = {'id': 17, 'role': 'area_safety'}
+        where, params = appeal_scope(core, self.cur, user)
+        self.assertEqual(len(where), 2)
+        self.assertEqual(params[0], ['浦东'])
+        self.assertEqual(set(params[1]), {3, 4})
+        self.assertFalse(can_decide(core, self.cur, user, {'status': 'area_pending', 'region': '浦东'}))
+
+    def test_missing_or_invalid_binding_fails_closed(self):
+        user = {'id': 18, 'role': 'area_safety'}
+        key = 'limit_issue_station_region_scope'
+        self.assertEqual(api.get_effective_station_region_scope_values(self.cur, user, key), set())
+        self.cur.execute("INSERT INTO user_station_region_scopes VALUES (17,%s,'松金')", (key,))
+        self.assertEqual(api.get_effective_station_region_scope_values(self.cur, {'id': 17, 'role': 'area_safety'}, key), set())

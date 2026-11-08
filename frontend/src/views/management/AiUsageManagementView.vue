@@ -234,7 +234,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { aiModelDisplayName } from '@/utils/aiModelSettings'
-import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
+import { AREA_ROLE_LABELS, isAreaRole, isSupervisorRole, SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 
 const loading = ref(false)
@@ -379,7 +379,7 @@ const roleLabel = (role) => {
   if (role === 'oil_gas') return '油气事业部'
   if (role === 'non_oil') return '非油事业部'
   if (role === 'finance') return '财务部'
-  if (role === 'area_account') return '片区账号'
+  if (isAreaRole(role)) return AREA_ROLE_LABELS[role]
   return role || '-'
 }
 

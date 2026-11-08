@@ -84,11 +84,11 @@
               <small class="field-tip">用于现场巡检分组，每组至少1人持证，条件允许时优先配2人；默认否。</small>
             </label>
 
-            <div v-if="form.role === 'area_account'" class="station-picker-card area-account-region-card">
+            <div v-if="isAreaRole(form.role)" class="station-picker-card area-account-region-card">
               <div class="station-picker-head">
                 <div>
                   <strong>绑定片区</strong>
-                  <p>片区归属用于隔离账号数据，不属于个人权限覆盖。</p>
+                  <p>{{ isAreaSpecialist(form.role) ? `只读范围：绑定片区内的${AREA_SPECIALIST_DEPARTMENT_LABELS[form.role]}检查表（含历史版本）。` : '片区归属用于隔离账号数据，不属于个人权限覆盖。' }}</p>
                 </div>
                 <span>{{ areaAccountRegion || '未选择片区' }}</span>
               </div>
@@ -148,7 +148,8 @@
             <div class="permission-panel-head">
               <div>
                 <strong>页面权限开关</strong>
-                <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '未单独设置的权限随角色通用权限变化；单独开启或关闭优先于角色设置，仍受依赖规则约束。' }}</p>
+                <p v-if="isAreaSpecialist(form.role)">固定范围：{{ areaAccountRegion || '未绑定片区' }} · {{ AREA_SPECIALIST_DEPARTMENT_LABELS[form.role] }}检查表。只能调整驾驶舱的查看开关；所属片区在账号资料中修改。</p>
+                <p v-else>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '未单独设置的权限随角色通用权限变化；单独开启或关闭优先于角色设置，仍受依赖规则约束。' }}</p>
               </div>
               <span class="permission-overview">{{ roleLabel(form.role) }} · {{ enabledPermissionCount }} / {{ permissions.length }} 项已开启</span>
             </div>
@@ -180,7 +181,7 @@
                   <div class="permission-section-label">1 数据范围</div>
                   <UserPermissionToggle v-for="permission in group.scopeItems" :key="permission.key" :permission="permission"
                     :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
-                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root' || isAreaSpecialist(form.role)"
                     @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
@@ -210,7 +211,7 @@
                     <span>{{ selectedInspectionScopeSummary(inspectionScopeConfigForCategory(group.category).permissionKey) }}</span>
                   </div>
 
-                  <label class="scope-inheritance"><input type="checkbox" :checked="scopeInherited[inspectionScopeConfigForCategory(group.category).permissionKey]" @change="setScopeInheritance(inspectionScopeConfigForCategory(group.category).permissionKey, $event.target.checked)" />沿用角色通用检查表范围</label>
+                  <label v-if="!isAreaSpecialist(form.role)" class="scope-inheritance"><input type="checkbox" :checked="scopeInherited[inspectionScopeConfigForCategory(group.category).permissionKey]" @change="setScopeInheritance(inspectionScopeConfigForCategory(group.category).permissionKey, $event.target.checked)" />沿用角色通用检查表范围</label>
                   <div class="inspection-scope-actions">
                     <button class="btn btn-secondary btn-sm" type="button"
                       :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) || !hasRoleDefaultInspectionScope(form.role)"
@@ -253,7 +254,7 @@
                   </div>
                 </div>
 
-                <div v-if="form.role !== 'area_account' && stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel"
+                <div v-if="!isAreaRole(form.role) && stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel"
                   :class="{ disabled: isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey) }">
                   <div class="inspection-scope-head">
                     <div>
@@ -433,7 +434,8 @@
           </label>
           <div class="role-template-note">
             <strong>{{ roleLabel(rolePermissionDialog.role) }}</strong>
-            <span>这里统一配置页面权限、检查表范围和片区范围；单个用户若另有个性化配置，会优先生效。</span>
+            <span v-if="isAreaSpecialist(rolePermissionDialog.role)">专员的只读数据范围固定为账号绑定片区与{{ AREA_SPECIALIST_DEPARTMENT_LABELS[rolePermissionDialog.role] }}检查表的交集。</span>
+            <span v-else>这里统一配置页面权限、检查表范围和片区范围；单个用户若另有个性化配置，会优先生效。</span>
           </div>
         </div>
 
@@ -543,7 +545,7 @@
               </div>
             </div>
 
-            <div v-if="stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel role-scope-panel"
+            <div v-if="!isAreaSpecialist(rolePermissionDialog.role) && stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel role-scope-panel"
               :class="{ disabled: isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey) }">
               <div class="inspection-scope-head">
                 <div>
@@ -614,7 +616,7 @@ import UserPermissionDetailsDialog from '@/components/UserPermissionDetailsDialo
 import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
 import UserPermissionToggle from '@/components/UserPermissionToggle.vue'
 import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
-import { isSupervisorRole } from '@/utils/roles'
+import { AREA_SPECIALIST_DEPARTMENT_LABELS, isAreaRole, isAreaSpecialist, isSupervisorRole } from '@/utils/roles'
 import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions } from '@/utils/userDirectory'
 
 const currentUserId = localStorage.getItem('user_id') || ''
@@ -835,6 +837,7 @@ const rolePermissionDialog = reactive({
 const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
   const groups = []
   permissions.value.forEach((permission) => {
+    if (isAreaSpecialist(role) && !permission.defaults?.[role]) return
     let group = groups.find((item) => item.category === permission.category)
     if (!group) {
       group = {
@@ -900,7 +903,7 @@ const stationCountByRegion = (region) => {
 }
 
 const applyAreaAccountRegionScope = () => {
-  if (form.role !== 'area_account') return
+  if (!isAreaRole(form.role)) return
   const regionValues = areaAccountRegion.value ? [areaAccountRegion.value] : []
   if (!form.station_region_scope_values || typeof form.station_region_scope_values !== 'object') {
     form.station_region_scope_values = createEmptyStationRegionScopeMap()
@@ -966,7 +969,7 @@ const roleTemplateDefaultScopeActionLabel = computed(() => {
 })
 const defaultScopeBadgeLabel = (label) => `${String(label || '').replace(/账号$/, '')}默认`
 const isInspectionScopeDisabled = (permissionKey) => scopeInherited[permissionKey] || (
-  form.role === 'root' || !form.permissions?.[permissionKey]
+  form.role === 'root' || isAreaSpecialist(form.role) || !form.permissions?.[permissionKey]
 )
 const isStationRegionScopeDisabled = (permissionKey) => scopeInherited[permissionKey] || (
   form.role === 'root' || !form.permissions?.[permissionKey]
@@ -1177,6 +1180,7 @@ const isPermissionDisabledForMap = (permissionMap, permissionKey) => {
 }
 
 const isRolePermissionDisabled = (permissionKey) => {
+  if (isAreaSpecialist(rolePermissionDialog.role)) return permissionKey !== 'view_operations_overview'
   if (permissionKey === 'review_quality_appeals') return currentRole !== 'root' || rolePermissionDialog.role !== 'quality_safety'
   return isPermissionDisabledForMap(rolePermissionDialog.permissions, permissionKey)
 }
@@ -1248,7 +1252,7 @@ const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
   form.station_region_scope_values = createEmptyStationRegionScopeMap()
-  if (form.role === 'area_account') {
+  if (isAreaRole(form.role)) {
     form.station_id = ''
     stationRegionFilter.value = ''
     stationKeyword.value = ''
@@ -1292,7 +1296,7 @@ const resetRoleTemplateToSystemDefaults = () => {
 
 const validateRoleTemplate = () => {
   if (
-    inspectionTables.value.length > 0 &&
+    !isAreaSpecialist(rolePermissionDialog.role) && inspectionTables.value.length > 0 &&
     inspectionTableScopePermissionKeys.some((key) => (
       rolePermissionDialog.permissions?.[key] && !ensureRoleInspectionScopeList(key).length
     ))
@@ -1300,7 +1304,7 @@ const validateRoleTemplate = () => {
     return '已启用检查表范围限制，请至少为对应页面选择一张检查表。'
   }
   if (
-    rolePermissionDialog.role !== 'area_account' &&
+    !isAreaRole(rolePermissionDialog.role) &&
     stationRegionScopePermissionKeys.some((key) => (
       rolePermissionDialog.permissions?.[key] && !ensureRoleStationRegionScopeList(key).length
     ))
@@ -1423,7 +1427,7 @@ const ensureRoleStationRegionScopeList = (permissionKey) => {
   return rolePermissionDialog.station_region_scope_values[permissionKey]
 }
 
-const isRoleInspectionScopeDisabled = (permissionKey) => !rolePermissionDialog.permissions?.[permissionKey]
+const isRoleInspectionScopeDisabled = (permissionKey) => isAreaSpecialist(rolePermissionDialog.role) || !rolePermissionDialog.permissions?.[permissionKey]
 const isRoleStationRegionScopeDisabled = (permissionKey) => !rolePermissionDialog.permissions?.[permissionKey]
 
 const selectedRoleInspectionScopeSummary = (permissionKey) => {
@@ -1597,9 +1601,10 @@ const startEdit = (user, mode = 'account') => {
   const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
   stationRegionFilter.value = station?.region || ''
   stationKeyword.value = ''
-  areaAccountRegion.value = user.role === 'area_account'
-    ? firstAreaAccountRegionFromScope(user.station_region_scope_values)
+  areaAccountRegion.value = isAreaRole(user.role)
+    ? firstAreaAccountRegionFromScope(isAreaSpecialist(user.role) ? user.station_region_scope_overrides : user.station_region_scope_values)
     : ''
+  if (isAreaSpecialist(user.role)) form.inspection_table_scope_ids = normalizeInspectionScopeMap(user.inspection_table_scope_ids)
   formError.value = ''
   setMessage(`已进入【${user.username}】编辑状态。`, 'info')
 }
@@ -1724,9 +1729,10 @@ const importUsers = async (event) => {
 const validateForm = () => {
   if (!form.username) return '请填写用户名。'
   if (!form.role) return '请选择角色。'
-  if (form.role !== 'area_account' && !form.real_name) return '请填写用户姓名。'
+  if (!isAreaRole(form.role) && !form.real_name) return '请填写用户姓名。'
   if (form.role === 'station_manager' && !form.station_id) return '站点账号必须选择所属站点。'
-  if (form.role === 'area_account' && !areaAccountRegion.value) return '片区账号必须选择所属片区/归属地。'
+  if (isAreaRole(form.role) && !areaAccountRegion.value) return '片区角色必须选择所属片区/归属地。'
+  if (isAreaSpecialist(form.role)) return ''
   if (editorMode.value !== 'permissions') return ''
   if (
     form.role !== 'root' &&
@@ -1758,7 +1764,7 @@ const saveUser = async () => {
   try {
     saving.value = true
     const isCreating = !form.id
-    const normalizedRealName = form.role === 'area_account'
+    const normalizedRealName = isAreaRole(form.role)
       ? (form.real_name || areaAccountRegion.value || form.username)
       : form.real_name
     let response
@@ -1773,7 +1779,7 @@ const saveUser = async () => {
       const payload = { user_id: currentUserId, username: form.username, role: form.role,
         real_name: normalizedRealName, phone: form.phone, station_id: form.station_id,
         has_driving_permit: isSupervisorRole(form.role) && form.has_driving_permit }
-      if (form.role === 'area_account') payload.station_region_scope_values = Object.fromEntries(stationRegionScopePermissionKeys.map(key => [key, [areaAccountRegion.value]]))
+      if (isAreaRole(form.role)) payload.station_region_scope_values = Object.fromEntries(stationRegionScopePermissionKeys.map(key => [key, [areaAccountRegion.value]]))
       response = form.id ? await axios.put(`/api/management/users/${form.id}`, payload) : await axios.post('/api/management/users', payload)
     }
     setMessage(response.data?.message || '用户已保存。', 'success')

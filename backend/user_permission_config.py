@@ -1,5 +1,6 @@
 """Sparse personal overrides. Callers own authentication and transactions."""
 from security_service import record_security_event
+from area_roles import AREA_ROLES
 
 
 def merge_personal_permissions(base, overrides, exclusive_groups, normalize, role):
@@ -41,19 +42,19 @@ def clear_personal_permissions(cur, actor, *, apply=False):
         (SELECT count(*) FROM user_station_region_scopes s WHERE s.user_id=u.id) AS regions
         FROM users u ORDER BY u.id FOR UPDATE OF u''')
     rows = [dict(row) for row in cur.fetchall()]
-    affected = [row for row in rows if row['switches'] or row['tables'] or (row['regions'] and row['role'] != 'area_account')]
+    affected = [row for row in rows if row['switches'] or row['tables'] or (row['regions'] and row['role'] not in AREA_ROLES)]
     if apply:
         cur.execute('DELETE FROM user_permissions')
         cur.execute('DELETE FROM user_inspection_table_scopes')
-        cur.execute("DELETE FROM user_station_region_scopes s USING users u WHERE s.user_id=u.id AND u.role <> 'area_account'")
+        cur.execute("DELETE FROM user_station_region_scopes s USING users u WHERE s.user_id=u.id AND NOT (u.role = ANY(%s))", (list(AREA_ROLES),))
         for row in affected:
             cur.execute('''UPDATE users SET auth_version=COALESCE(auth_version,1)+1,
                            updated_at=CURRENT_TIMESTAMP WHERE id=%s''', (row['id'],))
             record_security_event(cur, actor, 'personal_permissions_cleared', 'success', target=row,
                                   details={'switches_removed': row['switches'], 'table_scopes_removed': row['tables'],
-                                           'region_scopes_removed': 0 if row['role'] == 'area_account' else row['regions'],
-                                           'area_ownership_preserved': row['role'] == 'area_account'})
+                                           'region_scopes_removed': 0 if row['role'] in AREA_ROLES else row['regions'],
+                                           'area_ownership_preserved': row['role'] in AREA_ROLES})
     return {'accounts': len(rows), 'affected_accounts': len(affected),
             'switches': sum(row['switches'] for row in rows), 'table_scopes': sum(row['tables'] for row in rows),
-            'region_scopes': sum(row['regions'] for row in rows if row['role'] != 'area_account'),
-            'area_bindings_preserved': sum(row['regions'] for row in rows if row['role'] == 'area_account')}
+            'region_scopes': sum(row['regions'] for row in rows if row['role'] not in AREA_ROLES),
+            'area_bindings_preserved': sum(row['regions'] for row in rows if row['role'] in AREA_ROLES)}

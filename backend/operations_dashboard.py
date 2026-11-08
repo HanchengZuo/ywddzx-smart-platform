@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
+from area_roles import AREA_ROLES
 
 
 PERMISSIONS = {
@@ -41,7 +42,7 @@ def selected_station(source):
 def issue_cte(core, cur, user, source):
     start, end = parse_period(source)
     station = selected_station(source)
-    if user.get('role') == 'area_account':
+    if user.get('role') in AREA_ROLES:
         where, params = core.build_issue_list_visibility_scope(cur, user, include_pending_area=True)
     else:
         where, params = core.build_issue_list_visibility_scope(cur, user)
@@ -91,7 +92,7 @@ def record_summary(core, cur, user, source):
     ):
         if not function(cur, user, where, params, column, key):
             where.append('FALSE')
-    if user.get('role') != 'area_account':
+    if user.get('role') not in AREA_ROLES:
         core.append_pending_audit_inspection_visibility_filter(user, where)
     start, end = parse_period(source)
     where += ['ins.inspection_date >= %s', 'ins.inspection_date <= %s']

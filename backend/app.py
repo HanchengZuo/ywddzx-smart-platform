@@ -702,6 +702,10 @@ from root_authenticator import authenticate as authenticate_root_totp, eligible 
 from issue_flow_presentation import present_flow_rows, flow_event_presentation
 from quality_deadlines import register_quality_deadlines
 
+from area_roles import (AREA_ROLE_LABELS, AREA_ROLES, AREA_SPECIALIST_DEPARTMENTS,
+                        is_area_specialist, require_specialist_region, restrict_specialist_permissions,
+                        specialist_api_allowed, specialist_can_read_media)
+
 ROLE_OPTIONS = {
     "root",
     "supervisor",
@@ -712,7 +716,7 @@ ROLE_OPTIONS = {
     "oil_gas",
     "non_oil",
     "finance",
-    "area_account",
+    *AREA_ROLES,
 }
 ROLE_LABELS = {
     "root": "系统管理员",
@@ -724,7 +728,7 @@ ROLE_LABELS = {
     "oil_gas": "油气事业部账号",
     "non_oil": "非油事业部账号",
     "finance": "财务部账号",
-    "area_account": "片区账号",
+    **AREA_ROLE_LABELS,
 }
 QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
     ("计量稽查检查表", "online"),
@@ -1173,6 +1177,11 @@ AREA_ACCOUNT_PERMISSION_OVERRIDES = {
 for permission_item in PERMISSION_CATALOG:
     if permission_item["key"] in AREA_ACCOUNT_PERMISSION_OVERRIDES:
         permission_item["defaults"]["area_account"] = AREA_ACCOUNT_PERMISSION_OVERRIDES[permission_item["key"]]
+    for specialist in AREA_SPECIALIST_DEPARTMENTS:
+        key = permission_item["key"]
+        permission_item["defaults"][specialist] = restrict_specialist_permissions(
+            {key: permission_item["defaults"]["area_account"]}
+        )[key]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
@@ -2787,6 +2796,8 @@ def require_signed_api_token():
             ),
             403,
         )
+    if is_area_specialist(user.get("role")) and not specialist_api_allowed(request.endpoint, request.path, request.method):
+        return jsonify(success=False, error="当前片区专员账号无权访问此功能。"), 403
     current_user_id = normalize_identity_for_compare(user["id"])
     for key, value in iter_request_identity_values():
         requested_user_id = normalize_identity_for_compare(value)
@@ -5802,6 +5813,8 @@ def role_default_permission(role, permission_key):
 
 def enforce_exclusive_permissions(permission_map, role=None):
     normalized = dict(permission_map or {})
+    if is_area_specialist(role):
+        return restrict_specialist_permissions(normalized)
     for exclusive_keys in PERMISSION_EXCLUSIVE_GROUPS:
         active_keys = [key for key in exclusive_keys if normalized.get(key)]
         if len(active_keys) <= 1:
@@ -5931,7 +5944,7 @@ def normalize_checklist_scope_name(value):
 
 
 def get_role_default_inspection_table_ids(cur, role, *, include_inactive=False):
-    checklist_scope = ROLE_DEFAULT_CHECKLIST_SCOPES.get(role)
+    checklist_scope = ROLE_DEFAULT_CHECKLIST_SCOPES.get(AREA_SPECIALIST_DEPARTMENTS.get(role, role))
     if not checklist_scope:
         return []
     cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
@@ -6078,13 +6091,14 @@ def build_role_effective_inspection_table_scope_map(cur, role, permissions=None)
     if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
         return {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
     effective_permissions = permissions or build_role_effective_permissions(cur, normalized_role)
-    role_scope_map = get_role_inspection_table_scope_overrides(cur, normalized_role)
-    default_scope_ids = get_role_default_inspection_table_ids(cur, normalized_role)
+    specialist = is_area_specialist(normalized_role)
+    role_scope_map = {} if specialist else get_role_inspection_table_scope_overrides(cur, normalized_role)
+    default_scope_ids = get_role_default_inspection_table_ids(cur, normalized_role, include_inactive=specialist)
     result = {}
     for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
         if not effective_permissions.get(scope_key):
             result[scope_key] = []
-        elif role_scope_map.get(scope_key):
+        elif not specialist and role_scope_map.get(scope_key):
             result[scope_key] = list(role_scope_map[scope_key])
         elif default_scope_ids:
             result[scope_key] = list(default_scope_ids)
@@ -6106,6 +6120,8 @@ def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=N
         return None
 
     normalized_scope_key = normalize_inspection_table_scope_key(scope_key)
+    if is_area_specialist(user.get("role")):
+        return set(get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True))
     effective_permissions = permissions or get_effective_permissions(cur, user)
     if not effective_permissions.get(normalized_scope_key):
         return None
@@ -6284,6 +6300,10 @@ def get_effective_station_region_scope_values(cur, user, scope_key, permissions=
         return None
 
     normalized_scope_key = normalize_station_region_scope_key(scope_key)
+    if is_area_specialist(user.get("role")):
+        # The account binding is authoritative; no fallback to role templates.
+        values = get_user_station_region_scope_overrides(cur, user["id"], "limit_issue_station_region_scope")
+        return set(values) if len(values) == 1 else set()
     effective_permissions = permissions or get_effective_permissions(cur, user)
     if not effective_permissions.get(normalized_scope_key):
         return None
@@ -6344,7 +6364,7 @@ def should_hide_inspector_contact_info(cur, user):
 
 
 def should_hide_pending_audit_flow_for_user(user):
-    return bool(user and user.get("role") in ("station_manager", "area_account"))
+    return bool(user and user.get("role") in ("station_manager", *AREA_ROLES))
 
 
 def append_pending_audit_issue_visibility_filter(user, where_clauses):
@@ -15203,7 +15223,7 @@ def build_management_user_payload(data, is_create=False):
 
     role = normalize_user_role(data.get("role"))
     real_name = normalize_text(data.get("real_name"), 80)
-    if role == "area_account" and not real_name:
+    if role in AREA_ROLES and not real_name:
         real_name = username
     if not real_name:
         raise ValueError("请填写用户姓名。")
@@ -15366,6 +15386,8 @@ def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
 
 
 def apply_user_inspection_table_scope_updates(cur, target_user, scope_map, actor_user_id):
+    if is_area_specialist(target_user.get("role")):
+        return
     if is_root_user(target_user):
         cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
         return
@@ -15422,6 +15444,8 @@ def apply_role_inspection_table_scope_updates(cur, role, scope_map, actor_user_i
     normalized_role = normalize_text(role)
     if normalized_role not in ROLE_OPTIONS:
         raise ValueError("角色类型不正确。")
+    if is_area_specialist(normalized_role):
+        return
     if normalized_role == "root":
         cur.execute("DELETE FROM role_inspection_table_scopes WHERE role = %s;", (normalized_role,))
         return
@@ -15484,6 +15508,7 @@ def apply_user_station_region_scope_updates(cur, target_user, scope_map, actor_u
         return
 
     normalized_scope_map = normalize_station_region_scope_updates(scope_map)
+    require_specialist_region(target_user.get("role"), normalized_scope_map)
     all_scope_values = sorted(
         {
             region
@@ -15532,6 +15557,8 @@ def apply_role_station_region_scope_updates(cur, role, scope_map, actor_user_id)
     normalized_role = normalize_text(role)
     if normalized_role not in ROLE_OPTIONS:
         raise ValueError("角色类型不正确。")
+    if is_area_specialist(normalized_role):
+        return
     if normalized_role == "root":
         cur.execute("DELETE FROM role_station_region_scopes WHERE role = %s;", (normalized_role,))
         return
@@ -20589,8 +20616,9 @@ def get_management_users():
         role_inspection_table_scope_ids = build_role_effective_inspection_table_scope_map_all(cur)
         role_station_region_scope_values = build_role_effective_station_region_scope_map_all(cur)
         role_default_table_id_map = {
-            role: set(get_role_default_inspection_table_ids(cur, role))
-            for role in ROLE_DEFAULT_CHECKLIST_SCOPES
+            role: set(get_role_default_inspection_table_ids(cur, role, include_inactive=True)
+                      if is_area_specialist(role) else get_role_default_inspection_table_ids(cur, role))
+            for role in (*ROLE_DEFAULT_CHECKLIST_SCOPES, *AREA_SPECIALIST_DEPARTMENTS)
         }
 
         users = []
@@ -20607,12 +20635,14 @@ def get_management_users():
             has_personalized_config = bool(
                 overrides
                 or any(inspection_scope_overrides.get(scope_key) for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS)
-                or (row["role"] != "area_account" and any(station_region_scope_overrides.get(scope_key) for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS))
+                or (row["role"] not in AREA_ROLES and any(station_region_scope_overrides.get(scope_key) for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS))
             )
             inspection_table_scope_ids = {}
             for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
                 if not permissions.get(scope_key):
                     inspection_table_scope_ids[scope_key] = []
+                elif is_area_specialist(row["role"]):
+                    inspection_table_scope_ids[scope_key] = sorted(role_default_table_id_map[row["role"]])
                 elif inspection_scope_overrides.get(scope_key):
                     inspection_table_scope_ids[scope_key] = list(inspection_scope_overrides[scope_key])
                 elif role_inspection_table_scope_ids.get(row["role"], {}).get(scope_key):
@@ -20625,6 +20655,9 @@ def get_management_users():
             for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS:
                 if not permissions.get(scope_key):
                     station_region_scope_values[scope_key] = []
+                elif is_area_specialist(row["role"]):
+                    bound = station_region_scope_overrides.get("limit_issue_station_region_scope", [])
+                    station_region_scope_values[scope_key] = list(bound) if len(bound) == 1 else []
                 elif station_region_scope_overrides.get(scope_key):
                     station_region_scope_values[scope_key] = sorted(station_region_scope_overrides[scope_key])
                 elif role_station_region_scope_values.get(row["role"], {}).get(scope_key):
@@ -21718,6 +21751,13 @@ def update_management_user(target_user_id):
         if target_user["role"] != "root" and user_data["role"] == "root":
             return jsonify({"success": False, "error": "不能将普通用户升级为 root 系统管理员。"}), 400
 
+        if is_area_specialist(user_data["role"]):
+            binding = region_scope_values if "station_region_scope_values" in data else get_user_station_region_scope_overrides(cur, target_user_id)
+            require_specialist_region(user_data["role"], binding)
+        specialist_boundary_changed = (
+            is_area_specialist(target_user["role"]) or is_area_specialist(user_data["role"])
+        ) and (target_user["role"] != user_data["role"] or "station_region_scope_values" in data)
+
         cur.execute(
             """
             UPDATE users
@@ -21726,6 +21766,7 @@ def update_management_user(target_user_id):
                 real_name = %s,
                 phone = %s,
                 station_id = %s,
+                auth_version = COALESCE(auth_version, 1) + %s,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
             RETURNING id, username, role;
@@ -21736,6 +21777,7 @@ def update_management_user(target_user_id):
                 user_data["real_name"],
                 user_data["phone"],
                 user_data["station_id"],
+                int(specialist_boundary_changed),
                 target_user_id,
             ),
         )
@@ -21832,7 +21874,7 @@ def replace_management_user_permissions(target_user_id):
         if "inspection_table_scope_ids" in data:
             apply_user_inspection_table_scope_updates(cur, target, data["inspection_table_scope_ids"], actor["id"])
         # Area ownership is maintained with the account, not the permission editor.
-        if "station_region_scope_values" in data and target["role"] != "area_account":
+        if "station_region_scope_values" in data and target["role"] not in AREA_ROLES:
             apply_user_station_region_scope_updates(cur, target, data["station_region_scope_values"], actor["id"])
         cur.execute("UPDATE users SET updated_at=CURRENT_TIMESTAMP, auth_version=COALESCE(auth_version,1)+1 WHERE id=%s", (target_user_id,))
         record_security_event(cur, actor, "user_permission_configuration", "success", target=target,
@@ -24799,7 +24841,12 @@ def get_inspection_tables():
         historical = scope_context in {'issues','records','highlights','issue_list','inspection_records'} or request.args.get('include_inactive') == '1'
         where_clauses = ['TRUE' if historical else 'is_active = TRUE']
         params = []
-        if user_id:
+        authenticated = getattr(g, "current_user", None)
+        if authenticated and is_area_specialist(authenticated.get("role")):
+            if not append_inspection_table_scope_filter(cur, authenticated, where_clauses, params, "id",
+                                                       "limit_issue_inspection_table_scope"):
+                return jsonify([])
+        elif user_id:
             user = get_user_by_id(cur, user_id)
             if not user:
                 return jsonify({"success": False, "error": "用户不存在。"}), 404
@@ -26650,7 +26697,7 @@ def build_issue_list_visibility_scope(cur, user, *, include_pending_area=False):
     ):
         where_clauses.append("FALSE")
     # Only the operations cockpit opts area accounts into pre-audit observations.
-    if not (include_pending_area and user.get("role") == "area_account"):
+    if not (include_pending_area and user.get("role") in AREA_ROLES):
         append_pending_audit_issue_visibility_filter(user, where_clauses)
     return where_clauses, params
 
@@ -33495,6 +33542,8 @@ def get_inspection_issues(inspection_id):
 
 
 def can_user_view_issue_flow_history(cur, user, issue):
+    if is_area_specialist(user.get("role")) and issue.get("audit_status") in (None, "pending"):
+        return False
     if has_role_default_checklist_scope(user) and can_view_review_queue(cur, user) and issue_in_review_queue_scope(cur, user, issue):
         return True
     if is_supervisor_like(user):
@@ -33598,6 +33647,7 @@ def get_issue_flow_history(issue_id):
                 i.station_id,
                 i.inspection_table_id,
                 i.quality_review_handoff_id,
+                i.audit_status,
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 s.region AS station_region,
                 s.station_name,
@@ -34082,7 +34132,18 @@ def uploaded_file(filename):
     ):
         abort(404)
 
-    response = send_from_directory(STORAGE_ROOT, "/".join(path_parts), conditional=True)
+    relative_path = "/".join(path_parts)
+    if is_area_specialist(user.get("role")):
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                regions = get_effective_station_region_scope_values(cur, user, "limit_issue_station_region_scope")
+                tables = get_effective_inspection_table_scope_ids(cur, user, "limit_issue_inspection_table_scope")
+                if not specialist_can_read_media(cur, relative_path, regions, tables):
+                    abort(404)
+        finally:
+            conn.close()
+    response = send_from_directory(STORAGE_ROOT, relative_path, conditional=True)
     response.headers["Cache-Control"] = "private, no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response

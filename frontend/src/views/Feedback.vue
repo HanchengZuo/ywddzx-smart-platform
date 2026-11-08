@@ -232,7 +232,7 @@
 
 <script setup>
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
-import { SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
+import { AREA_ROLE_LABELS, SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
@@ -383,7 +383,7 @@ const roleLabel = (role) => {
     oil_gas: '油气事业部',
     non_oil: '非油事业部',
     finance: '财务部',
-    area_account: '片区账号'
+    ...AREA_ROLE_LABELS
   }
   return map[role] || role || '未知角色'
 }
