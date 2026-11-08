@@ -7,7 +7,7 @@
           <h2 id="review-page-title">我的待复核问题</h2>
         </div>
         <div class="review-overview-count" aria-live="polite">
-          <span>{{ accountRole === 'non_oil' ? '待复核（含待前序处理）' : '待复核' }}</span>
+          <span>{{ isNonOilDepartmentQueue ? nonOilQueueTitle : '待复核' }}</span>
           <div><strong>{{ loading ? '…' : listError ? '—' : resultTotal }}</strong><small> 条</small></div>
         </div>
       </div>
@@ -15,7 +15,7 @@
         <div class="review-scope-heading">
           <span class="review-scope-label">当前视角</span>
           <strong>{{ queueScopeLabel }}</strong>
-          <span v-if="!canSubmitQueue" class="review-scope-label">只读</span>
+          <span v-if="!canSubmitQueue || nonOilQueueView" class="review-scope-label">只读</span>
         </div>
         <template v-if="isSupervisionPerspective">
           <div class="scope-checklists" aria-label="督导中心复核覆盖部门">
@@ -25,7 +25,7 @@
         </template>
         <template v-else>
           <p v-if="accountRole === 'quality_safety'">仅显示督导中心转交给质安部的待复核问题。</p>
-          <p v-if="accountRole === 'non_oil'">站点提交后可查看；片区或盛大现场复核通过后，才可提交终审。</p>
+          <p v-if="accountRole === 'non_oil'">默认仅显示可由非油事业部终审的问题；等待片区或盛大现场复核的事项可切换查看。</p>
           <p v-if="areaReviewRoles.includes(accountRole)">仅复核本片区的非油检查问题。通过后交非油事业部终审，驳回直接退回站点。</p>
           <details v-if="scopeTables.length" class="review-scope-details">
             <summary>查看适用检查表（{{ scopeTables.length }}）</summary>
@@ -170,6 +170,9 @@
     <div v-if="loading && isReviewQueue" class="queue-progress card-surface" role="status" aria-live="polite"><span class="empty-state-orb loading"></span><div><strong>正在查询第 {{ page }} 页</strong><p>按已应用条件检索全部待复核数据，仅返回本页 {{ pageSize }} 条以内的问题。</p></div></div>
     <div v-if="listError" class="queue-error card-surface" role="alert">{{ listError }} <button class="btn btn-secondary" @click="fetchMyIssues">重试加载</button></div>
     <div class="mobile-issue-list">
+      <div v-if="isNonOilDepartmentQueue && isMobileView" class="mobile-review-queue card-surface">
+        <NonOilReviewQueueSwitch :view="nonOilQueueView" :counts="nonOilWaitingCounts" @select="switchNonOilQueue" />
+      </div>
       <div v-if="loading" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb loading"></div>
         <div class="empty-state-kicker">同步中</div>
@@ -317,9 +320,11 @@
       <div class="table-card-head">
         <div>
           <div class="filter-kicker">待办清单</div>
-          <h3>{{ tableFullscreen ? '全屏查看待办' : '待办明细' }}</h3>
+          <h3>{{ isNonOilDepartmentQueue ? nonOilQueueTitle : tableFullscreen ? '全屏查看待办' : '待办明细' }}</h3>
         </div>
         <div class="table-view-actions">
+          <NonOilReviewQueueSwitch v-if="isNonOilDepartmentQueue && !isMobileView" :view="nonOilQueueView"
+            :counts="nonOilWaitingCounts" @select="switchNonOilQueue" />
           <button v-if="isReviewQueue && !isMobileView" class="btn btn-secondary" type="button" :aria-pressed="tableFullscreen" @click="toggleTableFullscreen">{{ tableFullscreen ? '退出全屏' : '全屏显示' }}</button>
         <div ref="columnSettingsRef" class="column-settings-wrap">
           <button class="btn btn-secondary column-settings-btn" type="button" @click.stop="toggleColumnSettings">
@@ -734,6 +739,7 @@
 <script setup>
 import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
+import NonOilReviewQueueSwitch from '@/components/NonOilReviewQueueSwitch.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isSupervisorRole } from '@/utils/roles.js'
 import { areaReviewRoles, canSubmitIssueQueue, reviewQueuePerspective } from '@/utils/issueQueueAccess.js'
@@ -788,6 +794,12 @@ const appealSubmitted = () => {
 const props = defineProps({ queue: { type: String, required: true } })
 const accountRole = localStorage.getItem('user_role') || ''
 const isSupervisionPerspective = isSupervisorRole(accountRole)
+const isNonOilDepartmentQueue = computed(() => props.queue === 'review' && accountRole === 'non_oil')
+const nonOilQueueView = ref('')
+const nonOilWaitingCounts = ref({})
+const nonOilQueueTitle = computed(() => ({
+  area: '等待片区复核', field: '盛大现场复核中',
+})[nonOilQueueView.value] || '待我处理')
 // Shared UI follows the independent route, not the user's role.
 const currentRole = computed(() => props.queue === 'rectification' ? 'station_manager' : accountRole)
 let queuePermissions = {}
@@ -802,11 +814,13 @@ const reviewActionText = item => reviewIsReadOnly(item) ? '查看整改与流转
   area: '提交片区复核', department: '提交终审', field: '提交现场复核',
 })[item?.non_oil_review_stage] || '提交复核'
 const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : reviewQueuePerspective(accountRole))
-const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
+const myIssuesEmptyTitle = computed(() => isNonOilDepartmentQueue.value ? `没有符合条件的「${nonOilQueueTitle.value}」事项`
+  : currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
 const myIssuesEmptyDescription = computed(() => (
   currentRole.value === 'station_manager'
     ? '目前没有需要你提交整改反馈的问题，后续新任务会在这里集中出现。'
-    : accountRole === 'quality_safety' ? '当前没有符合筛选条件的转交事项；督导中心转交后会在这里显示。'
+    : isNonOilDepartmentQueue.value ? '可调整筛选条件，或切换到其他复核清单。'
+      : accountRole === 'quality_safety' ? '当前没有符合筛选条件的转交事项；督导中心转交后会在这里显示。'
       : '当前可见范围内没有待复核问题，站点提交整改后符合范围的事项会自动进入这里。'
 ))
 const loading = ref(false)
@@ -1322,6 +1336,7 @@ const fetchMyIssues = async ({ preserveList = false } = {}) => {
       params: isReviewQueue.value ? {
         ...reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value),
         ...(isMobileReview.value ? { issue_id: notificationIssueId.value, keyword: appliedFilters.value.keyword.trim() } : {}),
+        ...(nonOilQueueView.value ? { review_view: nonOilQueueView.value } : {}),
       } : { user_id: userId },
       signal: listController.signal,
     })
@@ -1330,6 +1345,7 @@ const fetchMyIssues = async ({ preserveList = false } = {}) => {
       if (!response.data?.success) throw new Error(response.data?.error || '待复核数据格式不正确。')
       issues.value = response.data.items || []
       serverTotal.value = response.data.total || 0
+      if (isNonOilDepartmentQueue.value) nonOilWaitingCounts.value = response.data.non_oil_waiting_counts || {}
       acceptingPage = true; page.value = response.data.page || 1; acceptingPage = false
     } else issues.value = response.data || []
   } catch (error) {
@@ -1354,17 +1370,31 @@ const applyFilters = () => {
 }
 
 const fetchReviewOptions = async () => {
-  if (!isReviewQueue.value || optionsLoading.value) return
+  if (!isReviewQueue.value) return
+  optionsController?.abort()
+  const controller = new AbortController()
+  optionsController = controller
   optionsLoading.value = true; optionsError.value = ''
-  optionsController = new AbortController()
   try {
-    const { data } = await axios.get('/api/my-review-issues/filter-options', { signal: optionsController.signal })
+    const { data } = await axios.get('/api/my-review-issues/filter-options', {
+      signal: controller.signal, params: nonOilQueueView.value ? { review_view: nonOilQueueView.value } : {},
+    })
+    if (controller.signal.aborted) return
     if (!data?.success) throw new Error(data?.error)
     serverOptions.value = data.filter_options || {}
     scopeTables.value = data.scope_tables || []
   } catch (error) {
-    if (!axios.isCancel(error)) optionsError.value = '筛选选项暂未加载成功，请重试。'
-  } finally { optionsLoading.value = false }
+    if (!controller.signal.aborted && !axios.isCancel(error)) optionsError.value = '筛选选项暂未加载成功，请重试。'
+  } finally { if (optionsController === controller) optionsLoading.value = false }
+}
+
+const switchNonOilQueue = view => {
+  if (nonOilQueueView.value === view) return
+  nonOilQueueView.value = view
+  acceptingPage = true; page.value = 1; acceptingPage = false
+  serverOptions.value = {}
+  fetchMyIssues()
+  fetchReviewOptions()
 }
 
 const transferItem = ref(null)
@@ -1654,6 +1684,7 @@ const submitAction = async () => {
     await nextTick()
     if (initialized) restoreIssueListPosition(pageRef.value, actionListPosition)
     actionListPosition = null
+    if (isNonOilDepartmentQueue.value) fetchReviewOptions()
     showActionToast(response.data.message || '复核提交成功。', 'success')
   } catch (error) {
     showActionToast(error?.response?.data?.error || '提交失败，请稍后重试。', 'error')
@@ -1741,6 +1772,7 @@ onBeforeUnmount(() => {
 .scope-checklists > span { display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border:1px solid #cbdde8; border-radius:8px; background:#eaf3f8; color:#244e69; font-size:12px; font-weight:600; line-height:1.5; }
 .scope-checklists small { color:#64748b; font-weight:400; }
 .table-view-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.mobile-review-queue { padding:10px; }
 .review-table-card .table-scroll { max-height:none; overflow-x:auto; }
 .review-table-card .table-scroll-wrap { min-width:0; }
 .fullscreen-table-card { position:fixed; inset:0; height:100dvh; z-index:3000; box-sizing:border-box; margin:0; padding:20px; border-radius:0; overflow:auto; overscroll-behavior:contain; background:#fff; }

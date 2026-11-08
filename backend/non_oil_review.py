@@ -17,6 +17,14 @@ def token_for(issue):
     return str(issue.get("non_oil_review_event_id") or 0)
 
 
+def department_queue_predicate(view=None):
+    stage = {
+        "area": "COALESCE(i.non_oil_review_stage, 'area') = 'area'",
+        "field": "i.non_oil_review_stage = 'field'",
+    }.get(view, "i.non_oil_review_stage = 'department'")
+    return "i.audit_status = 'approved' AND " + stage
+
+
 def can_act(role, stage):
     return (
         (role in AREA_REVIEW_ROLES and stage == "area")

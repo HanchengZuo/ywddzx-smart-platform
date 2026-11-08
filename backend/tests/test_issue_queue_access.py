@@ -215,14 +215,15 @@ class QueueScopeDatabaseTests(unittest.TestCase):
             response,status=result if isinstance(result,tuple) else (result,200)
             return response.get_json(),status
 
-    def non_oil_row(self):
-        body,status=self.call('/api/my-review-issues?issue_id=48',api.get_my_issues)
+    def non_oil_row(self, view=''):
+        body,status=self.call('/api/my-review-issues?issue_id=48&review_view='+view,api.get_my_issues)
         self.assertEqual(status,200,body)
         return next(iter(body['items']), None)
 
     def test_non_oil_handoff_preserves_pending_state_and_finalizes_only_after_field_review(self):
         self.role('non_oil')
-        row=self.non_oil_row()
+        self.assertIsNone(self.non_oil_row())
+        row=self.non_oil_row('area')
         self.assertEqual(row['non_oil_review_stage'],'area')
         self.assertFalse(row['review_can_act'])
         self.assertEqual(self.non_oil_review()[1],409)
@@ -248,7 +249,8 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         first_department_token=row['non_oil_review_token']
         self.assertEqual(self.transfer_to_field(first_department_token)[1],200)
         self.assertEqual(self.transfer_to_field(first_department_token)[1],409)
-        self.assertFalse(self.non_oil_row()['review_can_act'])
+        self.assertIsNone(self.non_oil_row())
+        self.assertFalse(self.non_oil_row('field')['review_can_act'])
         self.role('supervisor')
         row=self.non_oil_row()
         self.assertEqual(row['non_oil_review_stage'],'field')
@@ -407,7 +409,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
 
     def test_all_departments_get_only_their_tables_in_list_filters_and_badges(self):
         for role,ids in [('quality_safety',set()),('finance',{45}),('development_plan',{46}),
-                         ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44}),
+                         ('oil_gas',{47}),('non_oil',set()),('supervisor',{42,44}),
                          ('supervisor_manager',{42,44}),('root',{42,44,45,46,47,48}),
                          ('area_account',{48}),('area_non_oil',{48})]:
             with self.subTest(role=role):
@@ -429,6 +431,21 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         body,status=self.call('/api/my-review-issues?issue_id=45&inspection_tables=["财务检查表（现场）"]',
                               api.get_my_issues)
         self.assertEqual((status,body['total']),(200,0))
+
+    def test_non_oil_waiting_badges_ignore_filters_and_views_do_not_widen_permissions(self):
+        self.role('non_oil')
+        body,status=self.call('/api/my-review-issues?review_view=area&issue_id=45',api.get_my_issues)
+        self.assertEqual((status,body['total'],body['non_oil_waiting_counts']),(200,0,{'area':1,'field':0}))
+        body,status=self.call('/api/my-review-issues?review_view=all',api.get_my_issues)
+        self.assertEqual((status,body['total']),(200,0))
+        for view,stations in [('',[]),('area',['甲站']),('field',[])]:
+            body,status=self.call('/api/my-review-issues/filter-options?review_view='+view,
+                                  api.get_pending_review_filter_options)
+            self.assertEqual((status,body['filter_options']['stations']),(200,stations))
+        self.role('finance')
+        body,status=self.call('/api/my-review-issues?review_view=area',api.get_my_issues)
+        self.assertEqual((status,[row['id'] for row in body['items']]),(200,[45]))
+        self.assertNotIn('non_oil_waiting_counts',body)
 
     def test_supervisor_cannot_filter_or_review_delegated_departments_including_inactive_tables(self):
         self.cur.execute("UPDATE inspection_tables SET is_active=false WHERE id IN (3,4,5)")

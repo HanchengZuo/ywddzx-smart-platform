@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.4.1', date: '2026-11-08', title: '非油复核清单按阶段查看',
+    summary: '非油事业部默认只看待本部门终审的问题，等待片区复核可通过带角标的入口查看。',
+    items: ['角标显示全部等待片区复核事项数，不随筛选变化。等待片区或盛大现场复核的事项仍只读。'] },
   { version: 'v13.4', date: '2026-11-08', title: '非油问题分阶段复核',
     summary: '非油问题先由所属片区复核，再由非油事业部终审，可转交盛大现场复核。',
     items: ['站点整改说明必填，选择已整改时还须上传照片。', '非油事业部可提前查看整改材料；片区或现场复核通过后仍是待复核，任何阶段驳回均直接退回站点。'] },

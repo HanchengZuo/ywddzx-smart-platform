@@ -6487,7 +6487,7 @@ def review_queue_scope(cur, user, *, actionable=False):
                      AND COALESCE(NULLIF(TRIM(sr.region), ''), '未填写片区')=ANY(%s))"""
         params.append(sorted(non_oil_area_review_regions(cur, user)))
     elif role == "non_oil" and actionable:
-        scope += " AND i.non_oil_review_stage = 'department'"
+        scope += " AND " + non_oil_review.department_queue_predicate()
     elif is_supervisor_role(role):
         scope += " AND i.quality_review_handoff_id IS NULL"
         non_oil_ids = get_role_default_inspection_table_ids(cur, "non_oil", include_inactive=True)
@@ -26336,6 +26336,15 @@ def get_my_issues():
             scope, scope_params = review_queue_scope(cur, user)
             where_clause += " AND " + scope
             params.extend(scope_params)
+            waiting_counts = {}
+            if user["role"] == "non_oil":
+                cur.execute(f"""
+                    SELECT COUNT(*) FILTER (WHERE COALESCE(i.non_oil_review_stage, 'area') = 'area') AS area,
+                           COUNT(*) FILTER (WHERE i.non_oil_review_stage = 'field') AS field
+                    FROM issues i WHERE {PENDING_REVIEW_WHERE} AND i.audit_status = 'approved' AND {scope}
+                """, scope_params)
+                waiting_counts["non_oil_waiting_counts"] = dict(cur.fetchone())
+                where_clause += " AND " + non_oil_review.department_queue_predicate(request.args.get("review_view"))
             cur.execute(f'SELECT COUNT(*) AS total {PENDING_REVIEW_JOINS} {where_clause}', params)
             total = int((cur.fetchone() or {}).get('total') or 0)
             page = min(page, max(1, (total + page_size - 1) // page_size))
@@ -26420,6 +26429,7 @@ def get_my_issues():
             return jsonify({
                 'success': True, 'total': total, 'page': page, 'page_size': page_size,
                 'total_pages': max(1, (total + page_size - 1) // page_size),
+                **waiting_counts,
                 'items': [
                     normalize_issue_row_for_response(
                         row,
@@ -26499,6 +26509,8 @@ def get_pending_review_filter_options():
         if not can_view_review_queue(cur, user):
             return jsonify(success=False, error='当前账号无权查看待复核筛选项。'), 403
         scope, params = review_queue_scope(cur, user)
+        if user["role"] == "non_oil":
+            scope += " AND " + non_oil_review.department_queue_predicate(request.args.get("review_view"))
         # Only distinct lightweight facets; never ship all issue descriptions or photos.
         cur.execute(f"""
             SELECT ARRAY_AGG(DISTINCT s.region) AS regions,

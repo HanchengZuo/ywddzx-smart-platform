@@ -110,6 +110,7 @@ test('post-review refresh retains list height throughout network wait and on err
         isReviewQueue: { value: true }, isMobileReview: { value: true }, issues, loading, listError,
         page, pageSize: { value: 5 }, appliedFilters: { value: { keyword: '' } }, notificationIssueId: { value: '' },
         serverTotal: { value: 2 }, acceptingPage: false,
+        nonOilQueueView: { value: '' }, isNonOilDepartmentQueue: { value: false },
         reviewRequestParams: () => ({}), mobileReviewFilters: value => value, showActionToast: () => {},
         axios: { get: () => request, isCancel: () => false }, preserveList,
       }
