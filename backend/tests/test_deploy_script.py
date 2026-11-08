@@ -15,6 +15,7 @@ REQUIRED_VARS = (
     'WEBAUTHN_ORIGIN', 'CORS_ALLOWED_ORIGINS',
 )
 AI_KEYS = ('DEEPSEEK_API_KEY', 'ZHIPU_API_KEY', 'DASHSCOPE_API_KEY', 'MIMO_API_KEY')
+PROD_FILES = '-f docker-compose.yml -f docker-compose.prod.yml'
 
 
 class DeploymentScriptTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class DeploymentScriptTests(unittest.TestCase):
         self.log = self.root / 'commands.log'
         self.env = dict(os.environ, PATH=f'{self.bin}:/usr/bin:/bin', TEST_LOG=str(self.log),
                         TEST_PYTHON=sys.executable)
-        for key in (*REQUIRED_VARS, *AI_KEYS, 'APP_FRONTEND_VERSION', 'APP_ENV', 'TRUST_PROXY_HEADERS'):
+        for key in (*REQUIRED_VARS, *AI_KEYS, 'APP_FRONTEND_VERSION', 'APP_ENV', 'TRUST_PROXY_HEADERS', 'COMPOSE_FILE'):
             self.env.pop(key, None)
         self.keys_file = self.root / 'ai.env'
         self.keys_file.write_text('\n'.join(f'{key}=fake-deploy-key-{key}' for key in AI_KEYS))
@@ -73,8 +74,10 @@ case "$name" in
       shift
       if [ "$1" = version ]; then [ "${COMPOSE_V1:-}" != 1 ]; exit $?; fi
     fi
+    [ "$1 $2 $3 $4" = '-f docker-compose.yml -f docker-compose.prod.yml' ] || exit 1
+    shift 4
     case "$1" in
-      ps) [ "${WITH_FRONTEND:-}" != 1 ] || printf 'old-vite-container\\n' ;;
+      config) [ "$2" = --quiet ] && [ "${FAIL_PHASE:-}" != compose-config ] ;;
       up)
         printf 'backend-env version=%s env=%s proxy=%s\\n' "$APP_FRONTEND_VERSION" "$APP_ENV" "$TRUST_PROXY_HEADERS" >> "$TEST_LOG"
         for key in DEEPSEEK_API_KEY ZHIPU_API_KEY DASHSCOPE_API_KEY MIMO_API_KEY; do
@@ -112,17 +115,19 @@ esac
 
     def test_success_pulls_once_deploys_in_order_and_uses_package_version(self):
         self.configure()
-        result, commands = self.run_script(WITH_FRONTEND='1')
+        result, commands = self.run_script(COMPOSE_FILE='docker-compose.dev.yml')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(commands.count('git pull --ff-only'), 1)
         self.assertIn('npm ci --include=dev', commands)
         publish = commands.index('cp -a frontend/dist/. /var/www/ywddzx/')
-        backend = commands.index('docker compose up --build --force-recreate -d backend')
+        backend = commands.index(f'docker compose {PROD_FILES} up --build --force-recreate -d backend')
+        config = commands.index(f'docker compose {PROD_FILES} config --quiet')
+        self.assertLess(config, commands.index('npm run build'))
         self.assertLess(commands.index('npm run build'), publish)
-        self.assertLess(publish, commands.index('docker compose stop frontend'))
-        self.assertLess(commands.index('docker compose rm -f frontend'), backend)
+        self.assertLess(publish, backend)
+        self.assertFalse(any('docker-compose.dev.yml' in line for line in commands))
         self.assertIn(f'backend-env version={self.version} env=production proxy=true', commands)
-        self.assertIn('docker compose exec -T backend python /app/ensure_runtime_schema.py', commands)
+        self.assertIn(f'docker compose {PROD_FILES} exec -T backend python /app/ensure_runtime_schema.py', commands)
         self.assertNotIn('test-only', result.stdout + result.stderr)
         for key in AI_KEYS:
             self.assertIn(f'backend-ai {key}=present', commands)
@@ -148,12 +153,11 @@ esac
         self.assertIn('AI 密钥配置文件不存在', result.stderr)
         self.assertFalse(any(line.startswith(('npm ', 'find ', 'cp ')) or ' up ' in line for line in commands))
 
-    def test_legacy_compose_and_absent_frontend_container(self):
+    def test_legacy_compose_uses_the_same_production_files(self):
         self.configure()
         result, commands = self.run_script(COMPOSE_V1='1')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('docker-compose up --build --force-recreate -d backend', commands)
-        self.assertFalse(any('stop frontend' in line or 'rm -f frontend' in line for line in commands))
+        self.assertIn(f'docker-compose {PROD_FILES} up --build --force-recreate -d backend', commands)
 
     def test_missing_config_stops_before_build_or_publish(self):
         self.configure(missing='DB_PASSWORD')
@@ -164,7 +168,7 @@ esac
 
     def test_pull_and_build_failures_do_not_publish(self):
         self.configure()
-        for phase in ('pull', 'build', 'empty-build'):
+        for phase in ('pull', 'compose-config', 'build', 'empty-build'):
             with self.subTest(phase=phase):
                 if self.log.exists():
                     self.log.unlink()
@@ -186,7 +190,7 @@ esac
         result, commands = self.run_script(FAIL_PHASE='timeout')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('120 秒', result.stderr)
-        self.assertIn('docker compose logs --tail=120 backend', commands)
+        self.assertIn(f'docker compose {PROD_FILES} logs --tail=120 backend', commands)
         self.assertEqual(sum('grep -q gunicorn' in line for line in commands), 60)
         self.assertFalse(any('ensure_runtime_schema.py' in line for line in commands))
 

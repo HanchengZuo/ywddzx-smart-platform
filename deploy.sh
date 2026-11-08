@@ -21,6 +21,7 @@ else
   echo "未安装 Docker Compose，请安装 docker compose 或 docker-compose。" >&2
   exit 1
 fi
+compose+=(-f docker-compose.yml -f docker-compose.prod.yml)
 
 phase="拉取最新代码"
 echo "[1/5] 拉取最新代码..."
@@ -53,6 +54,7 @@ for variable_name in APP_SECRET_KEY DB_PASSWORD WEBAUTHN_RP_ID WEBAUTHN_ORIGIN C
 done
 export APP_ENV=production
 export TRUST_PROXY_HEADERS=true
+"${compose[@]}" config --quiet
 python3 deploy/ai_environment.py --check
 python3 deploy/amap_environment.py --check
 python3 deploy/web_push_environment.py --check
@@ -73,13 +75,6 @@ phase="发布前端静态文件"
 mkdir -p /var/www/ywddzx
 find /var/www/ywddzx -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 cp -a frontend/dist/. /var/www/ywddzx/
-
-frontend_container="$("${compose[@]}" ps -q frontend)"
-if [ -n "$frontend_container" ]; then
-  echo "停止并移除生产环境不再需要的 Vite 开发容器..."
-  "${compose[@]}" stop frontend
-  "${compose[@]}" rm -f frontend
-fi
 
 phase="重建并启动后端"
 echo "[4/5] 重建并启动后端，执行数据库迁移..."

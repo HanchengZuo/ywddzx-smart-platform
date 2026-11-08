@@ -273,7 +273,7 @@ iOS/iPadOS 16.4及以上须先在Safari分享菜单“添加到主屏幕”，�
 
 ## 服务器部署
 
-在服务器项目根目录执行 `bash deploy.sh`（也可执行 `./deploy.sh`），一次完成前端和后端更新，无需分别运行旧脚本。脚本只拉取一次代码（仅允许快进），加载服务器 `.env` 并检查生产配置，然后依次构建发布前端到 `/var/www/ywddzx`、移除不再需要的 Vite 开发容器、重建后端、等待迁移及 Gunicorn 启动、验证运行时数据库结构。兼容 `docker compose` 和旧版 `docker-compose`；前端使用 `npm ci --include=dev` 按锁文件安装构建依赖，后端版本从 `frontend/package.json` 读取并覆盖过时的环境值。
+在服务器项目根目录执行 `bash deploy.sh`（也可执行 `./deploy.sh`），一次完成前端和后端更新。脚本只拉取一次代码（仅允许快进），加载服务器 `.env`，显式使用 `docker-compose.yml` + `docker-compose.prod.yml`，不会加载开发配置或默认 override。前端仍构建发布到 `/var/www/ywddzx`，由 Nginx 提供服务；Compose 只管理后端和数据库，不启动 Vite。脚本重建后端、等待迁移及 Gunicorn 启动并验证数据库结构。兼容 `docker compose` 和旧版 `docker-compose`。生产构建镜像源写在版本管理的生产配置中，无需服务器临时 Compose 文件。
 
 运行账号需要项目目录、Docker及 `/var/www/ywddzx` 的操作权限。服务器须配置 `APP_SECRET_KEY`、`DB_PASSWORD`、`WEBAUTHN_RP_ID`、`WEBAUTHN_ORIGIN` 和 `CORS_ALLOWED_ORIGINS`，且 Nginx 已加载 `deploy/nginx/ywddzx-cache.conf` 与 `ywddzx-security.conf`。配置或构建失败时不会替换前端文件；后续步骤失败会停止并说明阶段，不自动回滚已完成的部署。此脚本会实际更新生产服务并执行迁移，请仅在准备部署时运行。
 
@@ -1262,21 +1262,31 @@ flowchart LR
 
 第五批提取本地备份列表、storage 打包排除规则、归档暂存发布和旧包清理，保留原文件操作顺序、错误及并发边界。实现与验证已完成，详见 [第五批重构说明](docs/backend-refactor-batch-5.md)。
 
-```bash
-# 构建并启动本地开发环境，后端启动时会自动应用 Alembic 迁移
-docker compose up --build
+### 本地 Docker 开发
 
+首次启动前，在本机不入 Git 的 `.env` 中配置独立的 `APP_SECRET_KEY`（可用 `openssl rand -hex 32` 生成，不复用生产密钥）；已有本地密钥应保持不变，以免旧会话或加密凭据失效。已有数据库继续使用原来的 `DB_PASSWORD`。在原项目根目录启动，不改 Compose 项目名、数据卷或 `storage` 路径，不需要执行 `down -v`。
+
+```bash
+# 本地开发：包含 Vite，后端启动时会自动检查并应用 Alembic 迁移
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# 生产：在服务器项目根目录运行，Nginx 仍提供前端
+bash deploy.sh
+```
+
+本机打开 `http://localhost:5173`，同一可信局域网的电脑打开 `http://<本机局域网IP>:5173`。如不能访问，请检查本机防火墙及无线网络的设备隔离设置。后端和 PostgreSQL 的宿主机端口仍只绑定回环，浏览器请求由 Vite 同源代理。普通局域网 HTTP 不支持需要安全上下文的 Passkey 或 Web Push；Passkey 继续使用本机 localhost。无需共享时，可在本机 `.env` 中设 `DEV_FRONTEND_BIND_IP=127.0.0.1`，再执行本地启动命令。
+
+```bash
 # 前端构建验证
-cd frontend
-npm run build
+npm --prefix frontend run build
 
 # 后端测试
-docker compose run --rm --no-deps backend \
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps backend \
   python -m unittest discover -s tests -p 'test_*.py'
 
 # 检查数据库迁移状态
-docker compose exec backend python -m flask db current
-docker compose exec backend python -m flask db heads
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend python -m flask db current
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend python -m flask db heads
 ```
 
 ## 文档维护约定
@@ -1327,7 +1337,7 @@ docker compose exec backend python -m flask db heads
 
 ### v6.9 待复核列表轻量加载
 
-备份维护：COS 使用 16MB 分块、2 路并发和分块 MD5 校验，支持超过 5GB 的备份；云端完整对象大小及列表核对成功后只保留最近 1 份。上传失败不清理旧备份。同地域腾讯云服务器可配置 `COS_USE_INTERNAL=true` 使用 HTTPS 内网域名，默认关闭以兼容本地环境；可在服务器专有的 `docker-compose.override.yml` 中配置（不入库）。
+备份维护：COS 使用 16MB 分块、2 路并发和分块 MD5 校验，支持超过 5GB 的备份；云端完整对象大小及列表核对成功后只保留最近 1 份。上传失败不清理旧备份。同地域腾讯云服务器可在服务器的 `.env` 中配置 `COS_USE_INTERNAL=true` 使用 HTTPS 内网域名，默认关闭以兼容本地环境。
 
 “我的待复核问题”默认不限制月份或日期，仍查看全部历史待复核问题，但只请求当前页（桌面20条、手机5条）。筛选面板采用草稿与已应用条件分离，点击“开始筛选”后由数据库检索全队列；翻页、提交复核后的刷新仍使用已应用条件，末页为空时自动回到有效页码。移动端保留之前的站点选择记忆。
 
