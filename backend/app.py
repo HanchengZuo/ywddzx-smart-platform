@@ -702,7 +702,7 @@ from root_authenticator import authenticate as authenticate_root_totp, eligible 
 from issue_flow_presentation import present_flow_rows, flow_event_presentation
 from quality_deadlines import register_quality_deadlines
 
-from area_roles import (AREA_ROLE_LABELS, AREA_ROLES, AREA_SPECIALIST_DEPARTMENTS,
+from area_roles import (AREA_ROLE_LABELS, AREA_ROLES, AREA_SHARED_MENU_PERMISSIONS, AREA_SPECIALIST_DEPARTMENTS,
                         is_area_appeal_reviewer, is_area_specialist, require_specialist_region, restrict_specialist_permissions,
                         specialist_api_allowed, specialist_can_read_media)
 
@@ -5897,6 +5897,9 @@ def build_role_effective_permissions(cur, role):
     if role == "root":
         return {item["key"]: True for item in PERMISSION_CATALOG}
     role_overrides = get_role_permission_overrides(cur, role)
+    if is_area_specialist(role):
+        manager = build_role_effective_permissions(cur, "area_account")
+        role_overrides = {**role_overrides, **{key: manager[key] for key in AREA_SHARED_MENU_PERMISSIONS}}
     permissions = {
         item["key"]: role_overrides.get(item["key"], role_default_permission(role, item["key"]))
         for item in PERMISSION_CATALOG
@@ -5914,6 +5917,9 @@ def apply_role_permission_updates(cur, role, permissions, actor_user_id):
         normalize_permission_updates(permissions),
         normalized_role,
     )
+    if is_area_specialist(normalized_role):
+        normalized_permissions = {key: value for key, value in normalized_permissions.items()
+                                  if key not in AREA_SHARED_MENU_PERMISSIONS}
     if not is_root_user(get_user_by_id(cur, actor_user_id)):
         previous = build_role_effective_permissions(cur, normalized_role)
         for key, label in [('review_quality_appeals', '质安部申诉终审权限'), ('edit_help_documents', '帮助文档编辑权限')]:
@@ -24915,6 +24921,9 @@ def get_inspection_table_fields():
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         conn.commit()
+        user = getattr(g, "current_user", None)
+        if user and is_area_specialist(user.get("role")) and not can_view_checklist_originals(cur, user):
+            return jsonify(error="当前账号无权查看检查表原件库。"), 403
         if not table_id:
             return jsonify([])
 
@@ -25011,6 +25020,9 @@ def get_inspection_table_standards():
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         conn.commit()
+        user = getattr(g, "current_user", None)
+        if user and is_area_specialist(user.get("role")) and not can_view_checklist_originals(cur, user):
+            return jsonify(error="当前账号无权查看检查表原件库。"), 403
 
         inspection_table = get_inspection_table_record(cur, table_id)
         if not inspection_table:
@@ -26677,7 +26689,7 @@ def normalize_issue_list_filters(source):
     }
 
 
-def build_issue_list_visibility_scope(cur, user, *, include_pending_area=False):
+def build_issue_list_visibility_scope(cur, user, *, include_pending_area=False, include_all_area_tables=False):
     where_clauses = []
     params = []
     can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
@@ -26690,7 +26702,7 @@ def build_issue_list_visibility_scope(cur, user, *, include_pending_area=False):
             where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
             params.append(user["id"])
 
-    if not append_inspection_table_scope_filter(
+    if not (include_all_area_tables and is_area_specialist(user.get("role"))) and not append_inspection_table_scope_filter(
         cur,
         user,
         where_clauses,
@@ -34149,9 +34161,18 @@ def uploaded_file(filename):
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
-                regions = get_effective_station_region_scope_values(cur, user, "limit_issue_station_region_scope")
-                tables = get_effective_inspection_table_scope_ids(cur, user, "limit_issue_inspection_table_scope")
-                if not specialist_can_read_media(cur, relative_path, regions, tables):
+                permissions = get_effective_permissions(cur, user)
+                if path_parts[0] == "inspection_originals":
+                    allowed = permissions["view_checklist_originals"]
+                else:
+                    regions = get_effective_station_region_scope_values(cur, user, "limit_issue_station_region_scope", permissions)
+                    tables = get_effective_inspection_table_scope_ids(cur, user, "limit_issue_inspection_table_scope", permissions)
+                    map_statuses = (
+                        tuple(status for group in STATION_MAP_ISSUE_STATUS_FILTERS.values() for status in group)
+                        if permissions["view_station_map"] else ()
+                    )
+                    allowed = specialist_can_read_media(cur, relative_path, regions, tables, map_statuses=map_statuses)
+                if not allowed:
                     abort(404)
         finally:
             conn.close()
@@ -34227,7 +34248,7 @@ from service_report_http import register_service_report
 from certificates import register_certificates
 
 def certificate_regions(cur, user):
-    if user.get('role') != 'area_account':
+    if user.get('role') not in AREA_ROLES:
         return set()
     # Area binding is fixed, independent of the unrelated issue-view toggle.
     return get_effective_station_region_scope_values(

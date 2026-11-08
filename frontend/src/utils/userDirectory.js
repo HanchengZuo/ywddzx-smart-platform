@@ -1,5 +1,5 @@
 import { sortPermissionGroups } from './permissionPanel.js'
-import { matchesRoleFilter, rolePathLabel } from './roles.js'
+import { AREA_SHARED_MENU_PERMISSIONS, isAreaSpecialist, matchesRoleFilter, rolePathLabel } from './roles.js'
 
 export const personalScopeDraft = (effective, overrides) => ({
   ...(effective || {}),
@@ -92,6 +92,7 @@ export function userPermissionGroups(user, catalog, tables, roleOverrides = {}) 
   const groups = new Map()
   catalog.forEach(permission => {
     const source = user.role === 'root' ? '内置权限'
+      : isAreaSpecialist(user.role) && AREA_SHARED_MENU_PERMISSIONS.includes(permission.key) ? '继承片区经理'
       : Object.hasOwn(user.permission_overrides || {}, permission.key) ? '个人设置'
       : Object.hasOwn(roleOverrides, permission.key) ? '角色模板' : '系统默认'
     const item = { ...permission, enabled: user.role === 'root' || Boolean(user.permissions?.[permission.key]), source, scope: permissionScopeDetail(user, permission.key, tables) }

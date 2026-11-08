@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.3.2', date: '2026-11-08', title: '片区专员共享菜单权限',
+    summary: '三个片区专员继承片区经理在五类菜单的通用授权。',
+    items: ['对齐运营驾驶舱、站点地图、专家问答、检查表原件库及证照系统。驾驶舱按本片区全检查表统计，证照默认仍按所属片区。', '巡检清单、导出及申诉继续按各自的检查表范围和既有流程校验。'] },
   { version: 'v13.3.1', date: '2026-11-08', title: '片区角色分组与申诉初审',
     summary: '角色入口按片区账号及其子角色展示；安全专员可初审本片区申诉。',
     items: ['新增、编辑、角色模板、用户筛选及 Root 切换按「片区账号」展开子角色。', '片区经理和安全专员可初审本片区申诉；安全专员仍受质安部检查表范围限制，质安部终审不变。'] },

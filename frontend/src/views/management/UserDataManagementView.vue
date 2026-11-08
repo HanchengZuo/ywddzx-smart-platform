@@ -143,7 +143,7 @@
             <div class="permission-panel-head">
               <div>
                 <strong>页面权限开关</strong>
-                <p v-if="isAreaSpecialist(form.role)">固定范围：{{ areaAccountRegion || '未绑定片区' }} · {{ AREA_SPECIALIST_DEPARTMENT_LABELS[form.role] }}检查表。<template v-if="form.role === 'area_safety'">可初审本片区申诉，不含终审。 </template>只能调整驾驶舱的查看开关；所属片区在账号资料中修改。</p>
+                <p v-if="isAreaSpecialist(form.role)">巡检清单范围：{{ areaAccountRegion || '未绑定片区' }} · {{ AREA_SPECIALIST_DEPARTMENT_LABELS[form.role] }}检查表。<template v-if="form.role === 'area_safety'">可初审本片区申诉，不含终审。 </template>驾驶舱、站点地图、专家问答、检查表原件库和证照系统沿用片区经理通用权限。</p>
                 <p v-else>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '未单独设置的权限随角色通用权限变化；单独开启或关闭优先于角色设置，仍受依赖规则约束。' }}</p>
               </div>
               <span class="permission-overview">{{ roleLabel(form.role) }} · {{ enabledPermissionCount }} / {{ permissions.length }} 项已开启</span>
@@ -184,7 +184,7 @@
                   <div class="permission-section-label">2 范围内操作</div>
                   <UserPermissionToggle v-for="permission in group.actionItems" :key="permission.key" :permission="permission"
                     :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
-                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root' || isAreaSpecialist(form.role)"
                     @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
@@ -192,7 +192,7 @@
                   <div v-if="group.hasScopedLayout" class="permission-section-label">其他权限</div>
                   <UserPermissionToggle v-for="permission in group.regularItems" :key="permission.key" :permission="permission"
                     :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
-                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root' || isAreaSpecialist(form.role)"
                     @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
@@ -301,7 +301,7 @@
 
         <div class="form-actions">
           <button class="btn btn-secondary" type="button" :disabled="saving" @click="closeEditor">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="saving" @click="saveUser">
+          <button v-if="editorMode !== 'permissions' || !isAreaSpecialist(form.role)" class="btn btn-primary" type="button" :disabled="saving" @click="saveUser">
             {{ saving ? '保存中...' : editorMode === 'permissions' ? '保存个人权限' : form.id ? '保存资料' : '创建并生成初始密码' }}
           </button>
         </div>
@@ -425,7 +425,7 @@
             label="选择角色" @change="loadRoleTemplatePermissions" />
           <div class="role-template-note">
             <strong>{{ roleLabel(rolePermissionDialog.role) }}</strong>
-            <span v-if="isAreaSpecialist(rolePermissionDialog.role)">专员的数据范围固定为账号绑定片区与{{ AREA_SPECIALIST_DEPARTMENT_LABELS[rolePermissionDialog.role] }}检查表的交集。<template v-if="rolePermissionDialog.role === 'area_safety'">可初审本片区申诉，不含终审。</template></span>
+            <span v-if="isAreaSpecialist(rolePermissionDialog.role)">巡检清单按绑定片区与{{ AREA_SPECIALIST_DEPARTMENT_LABELS[rolePermissionDialog.role] }}检查表取交集。驾驶舱、站点地图、专家问答、检查表原件库和证照系统沿用片区经理通用权限。</span>
             <span v-else>这里统一配置页面权限、检查表范围和片区范围；单个用户若另有个性化配置，会优先生效。</span>
           </div>
         </div>
@@ -583,11 +583,11 @@
         </div>
         <div v-if="rolePermissionDialog.error" class="form-error">{{ rolePermissionDialog.error }}</div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" type="button" @click="resetRoleTemplateToSystemDefaults">
+          <button v-if="!isAreaSpecialist(rolePermissionDialog.role)" class="btn btn-secondary" type="button" @click="resetRoleTemplateToSystemDefaults">
             恢复系统默认
           </button>
           <button class="btn btn-secondary" type="button" @click="closeRolePermissionDialog">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving || !rolePermissionDialog.role" @click="saveRolePermissions">
+          <button v-if="!isAreaSpecialist(rolePermissionDialog.role)" class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving || !rolePermissionDialog.role" @click="saveRolePermissions">
             {{ rolePermissionDialog.saving ? '保存中...' : '保存角色模板' }}
           </button>
         </div>
@@ -607,7 +607,7 @@ import UserPermissionDetailsDialog from '@/components/UserPermissionDetailsDialo
 import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
 import UserPermissionToggle from '@/components/UserPermissionToggle.vue'
 import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
-import { AREA_SPECIALIST_DEPARTMENT_LABELS, isAreaRole, isAreaSpecialist, isSupervisorRole } from '@/utils/roles'
+import { AREA_SHARED_MENU_PERMISSIONS, AREA_SPECIALIST_DEPARTMENT_LABELS, isAreaRole, isAreaSpecialist, isSupervisorRole } from '@/utils/roles'
 import RegionalRoleSelect from '@/components/RegionalRoleSelect.vue'
 import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions } from '@/utils/userDirectory'
 
@@ -829,7 +829,7 @@ const rolePermissionDialog = reactive({
 const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
   const groups = []
   permissions.value.forEach((permission) => {
-    if (isAreaSpecialist(role) && !permission.defaults?.[role]) return
+    if (isAreaSpecialist(role) && !permission.defaults?.[role] && !AREA_SHARED_MENU_PERMISSIONS.includes(permission.key)) return
     let group = groups.find((item) => item.category === permission.category)
     if (!group) {
       group = {
@@ -1172,7 +1172,7 @@ const isPermissionDisabledForMap = (permissionMap, permissionKey) => {
 }
 
 const isRolePermissionDisabled = (permissionKey) => {
-  if (isAreaSpecialist(rolePermissionDialog.role)) return permissionKey !== 'view_operations_overview'
+  if (isAreaSpecialist(rolePermissionDialog.role)) return true
   if (permissionKey === 'review_quality_appeals') return currentRole !== 'root' || rolePermissionDialog.role !== 'quality_safety'
   return isPermissionDisabledForMap(rolePermissionDialog.permissions, permissionKey)
 }

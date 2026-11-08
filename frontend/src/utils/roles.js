@@ -10,6 +10,11 @@ export const AREA_ROLE_LABELS = Object.freeze({
 })
 export const isAreaRole = role => Object.hasOwn(AREA_ROLE_LABELS, role)
 export const isAreaSpecialist = role => Object.hasOwn(AREA_SPECIALIST_DEPARTMENT_LABELS, role)
+export const AREA_SHARED_MENU_PERMISSIONS = Object.freeze([
+  'view_operations_overview', 'view_station_map', 'view_expert_qa',
+  'view_checklist_originals', 'manage_checklist_originals',
+  'view_all_certificates', 'register_all_certificates',
+])
 export const AREA_ROLE_FAMILY = 'area_family'
 export const matchesRoleFilter = (role, filter) => !filter || (filter === AREA_ROLE_FAMILY ? isAreaRole(role) : filter === role)
 export const rolePathLabel = (role, label) => isAreaRole(role) ? `片区账号 / ${label || AREA_ROLE_LABELS[role]}` : label

@@ -9,7 +9,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 import app as api
-from area_roles import AREA_SPECIALIST_DEPARTMENTS, require_specialist_region, specialist_can_read_media
+from area_roles import AREA_SHARED_MENU_PERMISSIONS, AREA_SPECIALIST_DEPARTMENTS, require_specialist_region, specialist_can_read_media
+from certificates import scope as certificate_scope
 from issue_appeals import appeal_scope, can_decide
 from quality_deadlines import responsible_users
 
@@ -35,7 +36,7 @@ class AreaPolicyTests(unittest.TestCase):
              patch.object(api, 'touch_online_user_presence'), patch.object(api, 'start_backup_scheduler_once'):
             client = api.app.test_client()
             headers = {'Authorization': 'Bearer fixture'}
-            for path in ('/api/stations', '/api/inspection-table-standards?table_id=1',
+            for path in ('/api/stations',
                          '/api/inspection-reports/status', '/api/my-review-issues'):
                 self.assertEqual(client.get(path, headers=headers).status_code, 403)
             with patch.dict(api.app.view_functions, {'decide_issue_appeal': lambda appeal_id: ('handler reached', 200)}):
@@ -43,6 +44,46 @@ class AreaPolicyTests(unittest.TestCase):
                 for role in ('area_oil_gas', 'area_non_oil'):
                     user['role'] = role
                     self.assertEqual(client.post('/api/issue-appeals/5/decision', headers=headers).status_code, 403)
+
+    def test_shared_menu_grants_follow_manager_template_not_specialist_overrides(self):
+        for enable in (False, True):
+            def overrides(_cur, role):
+                return {key: (enable if role == 'area_account' else not enable)
+                        for key in AREA_SHARED_MENU_PERMISSIONS}
+            with patch.object(api, 'get_role_permission_overrides', side_effect=overrides), \
+                 patch.object(api, 'get_permission_overrides', return_value={key: not enable for key in AREA_SHARED_MENU_PERMISSIONS}):
+                for role in AREA_SPECIALIST_DEPARTMENTS:
+                    permissions = api.get_effective_permissions(None, {'id': 17, 'role': role})
+                    self.assertTrue(all(permissions[key] == enable for key in AREA_SHARED_MENU_PERMISSIONS))
+                    self.assertTrue(permissions['limit_issue_inspection_table_scope'])
+                    self.assertFalse(permissions['view_my_review_issues'])
+
+    def test_certificate_default_scope_is_the_same_for_all_area_roles(self):
+        for role in ('area_account', *AREA_SPECIALIST_DEPARTMENTS):
+            for operation in ('view', 'register'):
+                self.assertEqual(certificate_scope({'role': role}, {}, {'浦东'}, operation)[1:], ([['浦东']], 'region'))
+                self.assertEqual(certificate_scope({'role': role}, {}, set(), operation)[2], 'none')
+
+    def test_shared_page_endpoints_reach_their_own_permission_checks(self):
+        endpoints = {
+            ('GET','/api/station-map'): 'get_station_map',
+            ('GET','/api/station-map/1/issues'): 'get_station_map_issues',
+            ('GET','/api/event-feed'): 'get_event_feed',
+            ('GET','/api/inspection-table-originals'): 'get_inspection_table_originals',
+            ('GET','/api/checklist-versions/1/original'): 'version_original',
+            ('GET','/api/operations/expert/meta'): 'expert_meta',
+            ('POST','/api/operations/expert/questions'): 'expert_questions',
+            ('GET','/api/station-certificates/options'): 'certificates.options',
+            ('POST','/api/station-certificates'): 'certificates.register',
+        }
+        user = {'id': 17, 'role': 'area_safety'}
+        with patch.object(api, 'verify_auth_token', return_value=(user, {})), \
+             patch.object(api, 'touch_online_user_presence'), patch.object(api, 'start_backup_scheduler_once'):
+            client = api.app.test_client()
+            for (method, path), endpoint in endpoints.items():
+                with self.subTest(path=path), patch.dict(api.app.view_functions, {endpoint: lambda **_: ('allowed handler', 200)}):
+                    response = client.open(path, method=method, headers={'Authorization': 'Bearer fixture'})
+                    self.assertEqual(response.get_data(as_text=True), 'allowed handler')
 
     def test_security_filter_accepts_family_and_exact_child(self):
         accounts = [{'role': role} for role in ('area_account', 'area_safety', 'area_non_oil', 'quality_safety')]
@@ -79,11 +120,11 @@ class AreaScopeDatabaseTests(unittest.TestCase):
             INSERT INTO inspections VALUES(1,8);
             CREATE TABLE issues(id int, station_id int, inspection_id int, inspection_table_id int,
                 inspector_id int, audit_status text, photo_path text,
-                rectification_photo_path text, review_photo_path text);
+                rectification_photo_path text, review_photo_path text, status text);
             INSERT INTO issues
-                SELECT s.id*100+t.id,s.id,1,t.id,8,'approved','/issues/'||s.id||'-'||t.id||'.jpg',NULL,NULL
+                SELECT s.id*100+t.id,s.id,1,t.id,8,'approved','/issues/'||s.id||'-'||t.id||'.jpg',NULL,NULL,'待复核'
                 FROM stations s CROSS JOIN inspection_tables t;
-            INSERT INTO issues VALUES(999,1,1,3,8,'pending','issues/pending.jpg',NULL,NULL);
+            INSERT INTO issues VALUES(999,1,1,3,8,'pending','issues/pending.jpg',NULL,NULL,'待审核');
             CREATE TABLE inspection_issue_flow_history(issue_id int, photo_path text);
             CREATE TABLE inspection_highlights(station_id int, inspection_table_id int, audit_status text, photo_path text);
             INSERT INTO inspection_highlights VALUES(1,3,'approved','issues/highlight.jpg');
@@ -114,6 +155,18 @@ class AreaScopeDatabaseTests(unittest.TestCase):
                 self.assertFalse(specialist_can_read_media(self.cur, 'issues/1-5.jpg', regions, tables))
                 self.assertFalse(specialist_can_read_media(self.cur, 'issues/pending.jpg', regions, tables))
                 self.assertEqual(specialist_can_read_media(self.cur, 'issues/highlight.jpg', regions, tables), role == 'area_safety')
+
+    def test_cockpit_sees_all_checklists_only_within_bound_region_and_map_photos_follow_map(self):
+        user = {'id': 17, 'role': 'area_safety'}
+        where, params = api.build_issue_list_visibility_scope(
+            self.cur, user, include_pending_area=True, include_all_area_tables=True)
+        self.cur.execute('SELECT i.id FROM issues i JOIN stations s ON s.id=i.station_id '
+                         'JOIN inspections ins ON ins.id=i.inspection_id WHERE '
+                         + ' AND '.join(where) + ' ORDER BY i.id', params)
+        self.assertEqual([row['id'] for row in self.cur.fetchall()], [101, 102, 103, 104, 105, 999])
+        self.assertFalse(specialist_can_read_media(self.cur, 'issues/2-5.jpg', {'浦东'}, {3, 4}))
+        self.assertTrue(specialist_can_read_media(self.cur, 'issues/2-5.jpg', {'浦东'}, {3, 4}, map_statuses=('待复核',)))
+        self.assertFalse(specialist_can_read_media(self.cur, 'issues/pending.jpg', {'浦东'}, {3, 4}, map_statuses=('待复核',)))
 
     def test_safety_first_review_requires_matching_region_and_table(self):
         core = SimpleNamespace(**vars(api))

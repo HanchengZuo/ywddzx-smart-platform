@@ -1,9 +1,11 @@
 """Sparse personal overrides. Callers own authentication and transactions."""
 from security_service import record_security_event
-from area_roles import AREA_ROLES
+from area_roles import AREA_ROLES, AREA_SHARED_MENU_PERMISSIONS, is_area_specialist
 
 
 def merge_personal_permissions(base, overrides, exclusive_groups, normalize, role):
+    if is_area_specialist(role):
+        overrides = {key: value for key, value in overrides.items() if key not in AREA_SHARED_MENU_PERMISSIONS}
     merged = {key: overrides.get(key, value) for key, value in base.items()}
     # An explicit personal choice wins over an inherited, mutually exclusive one.
     for group in exclusive_groups:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
-from area_roles import AREA_ROLES
+from area_roles import AREA_ROLES, is_area_specialist
 
 
 PERMISSIONS = {
@@ -42,7 +42,9 @@ def selected_station(source):
 def issue_cte(core, cur, user, source):
     start, end = parse_period(source)
     station = selected_station(source)
-    if user.get('role') in AREA_ROLES:
+    if is_area_specialist(user.get('role')):
+        where, params = core.build_issue_list_visibility_scope(cur, user, include_pending_area=True, include_all_area_tables=True)
+    elif user.get('role') in AREA_ROLES:
         where, params = core.build_issue_list_visibility_scope(cur, user, include_pending_area=True)
     else:
         where, params = core.build_issue_list_visibility_scope(cur, user)
@@ -90,6 +92,8 @@ def record_summary(core, cur, user, source):
         (core.append_inspection_table_scope_filter, 'ins.inspection_table_id', 'limit_record_inspection_table_scope'),
         (core.append_station_region_scope_filter, 's.region', 'limit_record_station_region_scope'),
     ):
+        if key == 'limit_record_inspection_table_scope' and is_area_specialist(user.get('role')):
+            continue
         if not function(cur, user, where, params, column, key):
             where.append('FALSE')
     if user.get('role') not in AREA_ROLES:
@@ -180,7 +184,10 @@ def dashboard(core, cur, user, mode, source):
             result['regions'] = sorted(set(result['regions']) | set(result['records']['regions']))
             choices += result['records'].pop('scope_stations', [])
         # Highlights reuse the identical issue visibility aliases without joining inspections.
-        where, hp = core.build_issue_list_visibility_scope(cur, user)
+        if is_area_specialist(user.get('role')):
+            where, hp = core.build_issue_list_visibility_scope(cur, user, include_all_area_tables=True)
+        else:
+            where, hp = core.build_issue_list_visibility_scope(cur, user)
         start, end = parse_period(source)
         where += ['i.created_at >= %s::date', 'i.created_at < %s::date']
         hp += [start, end + timedelta(days=1)]

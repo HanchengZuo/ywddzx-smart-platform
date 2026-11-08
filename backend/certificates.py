@@ -7,6 +7,7 @@ from uuid import uuid4
 import warnings
 from PIL import Image, ImageOps
 from flask import Blueprint, g, jsonify, request, send_file
+from area_roles import AREA_ROLES
 
 
 def scope(user, permissions, regions, operation="view", alias="s"):
@@ -19,7 +20,7 @@ def scope(user, permissions, regions, operation="view", alias="s"):
         return "TRUE", [], "all"
     if user["role"] == "station_manager" and user.get("station_id"):
         return f"{alias}.id=%s", [user["station_id"]], "station"
-    if user["role"] == "area_account" and regions:
+    if user["role"] in AREA_ROLES and regions:
         return (
             f"COALESCE(NULLIF(TRIM({alias}.region),''),'未填写片区')=ANY(%s)",
             [sorted(regions)],

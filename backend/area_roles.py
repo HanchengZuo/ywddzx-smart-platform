@@ -18,12 +18,19 @@ SPECIALIST_FIXED_ENABLED = frozenset({
     "limit_issue_inspection_table_scope", "limit_record_inspection_table_scope",
     "hide_inspector_contact_info",
 })
-SPECIALIST_CONFIGURABLE = frozenset({"view_operations_overview"})
+AREA_SHARED_MENU_PERMISSIONS = frozenset({
+    "view_operations_overview", "view_station_map", "view_expert_qa",
+    "view_checklist_originals", "manage_checklist_originals",
+    "view_all_certificates", "register_all_certificates",
+})
 SPECIALIST_READ_ENDPOINTS = frozenset({
     "get_issues", "get_issue_filter_options", "get_issue_flow_history",
     "get_inspections", "get_inspection_filter_options", "get_inspection_issues",
     "get_inspection_tables", "highlights", "highlight_options",
     "list_issue_appeals", "operations",
+    "get_station_map", "get_station_map_issues", "get_event_feed",
+    "get_inspection_table_originals", "get_inspection_table_fields", "get_external_standards",
+    "get_inspection_table_standards", "export_inspection_table_external_standards", "expert_meta", "expert_question",
 })
 SPECIALIST_EXPORT_ENDPOINTS = frozenset({
     "create_issue_export_task", "get_issue_export_task",
@@ -39,6 +46,10 @@ def specialist_api_allowed(endpoint, path, method):
         return True
     if endpoint in SPECIALIST_EXPORT_ENDPOINTS or endpoint == "mark_appeal_read":
         return True
+    if (endpoint or "").startswith("certificates.") or endpoint in {
+        "expert_questions", "version_original", "upload_inspection_table_original_pdf",
+    }:
+        return True  # These handlers enforce the shared menu permissions and their own data rules.
     return method in {"GET", "HEAD"} and endpoint in SPECIALIST_READ_ENDPOINTS
 
 
@@ -53,7 +64,7 @@ def is_area_specialist(role):
 def restrict_specialist_permissions(permissions):
     return {
         key: key in SPECIALIST_FIXED_ENABLED or (
-            key in SPECIALIST_CONFIGURABLE and bool(enabled)
+            key in AREA_SHARED_MENU_PERMISSIONS and bool(enabled)
         )
         for key, enabled in permissions.items()
     }
@@ -67,14 +78,14 @@ def require_specialist_region(role, scopes):
         raise ValueError("片区专员必须绑定一个所属片区。")
 
 
-def specialist_can_read_media(cur, path, regions, tables):
+def specialist_can_read_media(cur, path, regions, tables, *, map_statuses=()):
     category = path.split("/", 1)[0]
     if category == "feedback_screenshots":
         return True  # Same public-function visibility as the feedback page.
-    if not regions or not tables:
-        return False
     stored_paths = [path, "/" + path]
     if category == "signatures":
+        if not regions or not tables:
+            return False
         cur.execute("""
             SELECT EXISTS (
                 SELECT 1 FROM inspections ins JOIN stations s ON s.id=ins.station_id
@@ -86,22 +97,29 @@ def specialist_can_read_media(cur, path, regions, tables):
             ) AS allowed
         """, (stored_paths, list(tables), list(regions)))
     elif category in ("issues", "rectifications"):
+        # A granted station map can show these issue photos even outside the specialist's checklist scope.
         cur.execute("""
             SELECT EXISTS (
                 SELECT 1 FROM issues i JOIN stations s ON s.id=i.station_id
-                WHERE (i.photo_path=ANY(%s) OR i.rectification_photo_path=ANY(%s) OR i.review_photo_path=ANY(%s)
-                       OR EXISTS (SELECT 1 FROM inspection_issue_flow_history h
-                                  WHERE h.issue_id=i.id AND h.photo_path=ANY(%s)))
-                  AND i.inspection_table_id=ANY(%s)
+                WHERE (i.photo_path=ANY(%s) OR i.rectification_photo_path=ANY(%s) OR i.review_photo_path=ANY(%s))
+                  AND TRIM(COALESCE(i.status, ''))=ANY(%s)
+                  AND COALESCE(i.audit_status, 'pending')<>'rejected'
+                UNION ALL
+                SELECT 1 FROM issues i JOIN stations s ON s.id=i.station_id
+                WHERE i.inspection_table_id=ANY(%s)
                   AND COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区')=ANY(%s)
                   AND COALESCE(i.audit_status, 'pending')<>'pending'
+                  AND (i.photo_path=ANY(%s) OR i.rectification_photo_path=ANY(%s) OR i.review_photo_path=ANY(%s)
+                       OR EXISTS (SELECT 1 FROM inspection_issue_flow_history h
+                                  WHERE h.issue_id=i.id AND h.photo_path=ANY(%s)))
                 UNION ALL
                 SELECT 1 FROM inspection_highlights h JOIN stations s ON s.id=h.station_id
                 WHERE h.photo_path=ANY(%s) AND h.inspection_table_id=ANY(%s)
                   AND COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区')=ANY(%s)
                   AND COALESCE(h.audit_status, 'pending')<>'pending'
             ) AS allowed
-        """, (stored_paths, stored_paths, stored_paths, stored_paths, list(tables), list(regions),
+        """, (stored_paths, stored_paths, stored_paths, list(map_statuses), list(tables), list(regions),
+              stored_paths, stored_paths, stored_paths, stored_paths,
               stored_paths, list(tables), list(regions)))
     else:
         return False

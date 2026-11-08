@@ -6,7 +6,7 @@ import { certificatePages, canAccessCertificates } from '../src/config/certifica
 import { PAGE_VISIBILITY_GROUPS } from '../src/config/pageVisibilityCatalog.js'
 
 test('certificate defaults apply to station/area roles and independent global grants expand only their operation', () => {
-  for (const role of ['root', 'station_manager', 'area_account']) {
+  for (const role of ['root', 'station_manager', 'area_account', 'area_oil_gas', 'area_non_oil', 'area_safety']) {
     for (const page of certificatePages)
       assert.equal(canAccessCertificates(role, {}, page.path), true)
   }
