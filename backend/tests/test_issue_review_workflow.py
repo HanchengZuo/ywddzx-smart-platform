@@ -272,9 +272,10 @@ class UnableClosureDatabaseTests(unittest.TestCase):
             created_at timestamptz DEFAULT CURRENT_TIMESTAMP);
           INSERT INTO inspection_issue_flow_history(issue_id,round_no,action_type,from_status,to_status,result)
             VALUES(42,1,'rectification_submitted','待整改','待复核','站经无法整改');''')
-        migration = importlib.import_module('migrations.versions.20261107_001_quality_review_handoff')
-        with patch.object(migration.op, 'execute', side_effect=self.cur.execute):
-            migration.upgrade()
+        for name in ('20261107_001_quality_review_handoff', '20261108_001_non_oil_review'):
+            migration = importlib.import_module(f'migrations.versions.{name}')
+            with patch.object(migration.op, 'execute', side_effect=self.cur.execute):
+                migration.upgrade()
         self.admin.commit()
 
     def tearDown(self):

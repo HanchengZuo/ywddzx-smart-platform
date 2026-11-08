@@ -34,7 +34,7 @@ TAG_SEARCH = """EXISTS (
 )"""
 
 
-def pending_review_keyword_clause(value):
+def pending_review_keyword_clause(value, *, hide_inspector=False):
     try:
         keywords = parse_description_keywords(value)
     except IssueDescriptionFilterError as exc:
@@ -42,9 +42,10 @@ def pending_review_keyword_clause(value):
     if not keywords:
         return '', []
     clauses, params = [], []
+    search_text = ISSUE_SEARCH_TEXT.replace('issue_inspector.real_name,', '') if hide_inspector else ISSUE_SEARCH_TEXT
     # Each word may match a different field; all words must be present in the same issue.
     for word in keywords:
         pattern = '%' + word.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
-        clauses.append(f"({ISSUE_SEARCH_TEXT} ILIKE %s ESCAPE '!' OR {TAG_SEARCH})")
+        clauses.append(f"({search_text} ILIKE %s ESCAPE '!' OR {TAG_SEARCH})")
         params.extend([pattern, pattern])
     return '(' + ' AND '.join(clauses) + ')', params

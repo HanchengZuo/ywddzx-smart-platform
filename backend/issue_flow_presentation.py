@@ -1,5 +1,7 @@
 """Read-only grouping of legacy duplicate events, without erasing audit evidence."""
 
+from non_oil_review import FLOW_LABELS
+
 
 def present_flow_rows(rows):
     appeals = [r for r in rows if r.get('action_type', '').startswith('appeal_')]
@@ -60,6 +62,13 @@ def flow_event_presentation(event):
             event['action_label'] = f'{"自动" if event.get("note", "").startswith("自动审核") else "问题"}审核：{result}'
     elif kind == 'review_transferred_to_quality':
         event.update(stage_label='复核转交', tone='info', from_label='督导中心待复核', to_label='质安部待复核')
+    elif kind in FLOW_LABELS:
+        source, destination = {
+            'non_oil_area_review_passed': ('片区复核', '非油事业部终审'),
+            'non_oil_field_review_requested': ('非油事业部终审', '盛大现场复核'),
+            'non_oil_field_review_passed': ('盛大现场复核', '非油事业部终审'),
+        }[kind]
+        event.update(stage_label='非油问题复核', tone='info', from_label=source, to_label=destination)
     elif kind in ('rectification_submitted', 'review_submitted'):
         event['stage_label'] = '问题复核' if kind == 'review_submitted' else '站点整改'
         event['tone'] = 'returned' if result in ('整改不通过', '驳回站级无法整改') else 'success' if kind == 'review_submitted' else 'info'

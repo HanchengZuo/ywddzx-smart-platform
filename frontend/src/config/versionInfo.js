@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.4', date: '2026-11-08', title: '非油问题分阶段复核',
+    summary: '非油问题先由所属片区复核，再由非油事业部终审，可转交盛大现场复核。',
+    items: ['站点整改说明必填，选择已整改时还须上传照片。', '非油事业部可提前查看整改材料；片区或现场复核通过后仍是待复核，任何阶段驳回均直接退回站点。'] },
   { version: 'v13.3.2', date: '2026-11-08', title: '片区专员共享菜单权限',
     summary: '三个片区专员继承片区经理在五类菜单的通用授权。',
     items: ['对齐运营驾驶舱、站点地图、专家问答、检查表原件库及证照系统。驾驶舱按本片区全检查表统计，证照默认仍按所属片区。', '巡检清单、导出及申诉继续按各自的检查表范围和既有流程校验。'] },

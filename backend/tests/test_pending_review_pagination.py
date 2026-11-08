@@ -54,7 +54,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 cur.fetchall.return_value = [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}]
                 stack.enter_context(patch('app.get_db_connection', return_value=conn))
                 tags = stack.enter_context(patch('app.attach_internal_standard_tags_to_issue_rows'))
-                stack.enter_context(patch('app.normalize_issue_row_for_response', side_effect=lambda row, *args: row))
+                stack.enter_context(patch('app.normalize_issue_row_for_response', side_effect=lambda row, *args, **kwargs: row))
                 for name in ('can_edit_inspection_issues', 'can_delete_inspection_issues', 'can_change_issue_inspector'):
                     stack.enter_context(patch('app.' + name, return_value=False))
                 for name in ('ensure_issue_inspector_schema', 'ensure_inspection_completion_schema',

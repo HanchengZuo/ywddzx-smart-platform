@@ -23,7 +23,9 @@ test('department and supervisor review switches are independent of issue-list sc
     assert.equal(canAccessIssueQueue(role, { view_all_inspection_issues: true }, 'review'), false)
     assert.equal(canAccessIssueQueue(role, p, 'rectification'), false)
   }
-  assert.equal(canAccessIssueQueue('area_account', { view_my_review_issues: true }, 'review'), false)
+  assert.equal(canAccessIssueQueue('area_account', { view_my_review_issues: true }, 'review'), true)
+  assert.equal(canAccessIssueQueue('area_non_oil', { view_my_review_issues: true }, 'review'), true)
+  assert.equal(canAccessIssueQueue('area_safety', { view_my_review_issues: true }, 'review'), false)
   for (const kind of ['review', 'rectification']) assert.equal(canSubmitIssueQueue('root', {}, kind), true)
 })
 

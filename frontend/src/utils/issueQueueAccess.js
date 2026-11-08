@@ -1,8 +1,10 @@
 import { isSupervisorRole } from './roles.js'
 
 export const departmentReviewRoles = ['quality_safety', 'development_plan', 'oil_gas', 'non_oil', 'finance']
+export const areaReviewRoles = ['area_account', 'area_non_oil']
 export function reviewQueuePerspective(role) {
   if (isSupervisorRole(role)) return '督导中心视角'
+  if (areaReviewRoles.includes(role)) return '片区 · 非油复核'
   const departments = { quality_safety: '质安部', development_plan: '发展计划部', oil_gas: '油气事业部', non_oil: '非油事业部', finance: '财务部' }
   return departments[role] ? departments[role] + '视角' : '全部待复核'
 }
@@ -16,7 +18,7 @@ export function canAccessIssueQueue(role, permissions = {}, kind = 'review') {
   if (kind === 'rectification') {
     return role === 'station_manager' && Boolean(permissions.view_my_rectification_issues)
   }
-  return (isSupervisorRole(role) || departmentReviewRoles.includes(role)) && Boolean(permissions.view_my_review_issues)
+  return (isSupervisorRole(role) || departmentReviewRoles.includes(role) || areaReviewRoles.includes(role)) && Boolean(permissions.view_my_review_issues)
 }
 
 export function canSubmitIssueQueue(role, permissions = {}, kind) {

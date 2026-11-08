@@ -701,6 +701,7 @@ from issue_appeals import APPEAL_LABELS, register_issue_appeals, appeal_notifica
 from root_authenticator import authenticate as authenticate_root_totp, eligible as root_totp_eligible, register_root_authenticator
 from issue_flow_presentation import present_flow_rows, flow_event_presentation
 from quality_deadlines import register_quality_deadlines
+import non_oil_review
 
 from area_roles import (AREA_ROLE_LABELS, AREA_ROLES, AREA_SHARED_MENU_PERMISSIONS, AREA_SPECIALIST_DEPARTMENTS,
                         is_area_appeal_reviewer, is_area_specialist, require_specialist_region, restrict_specialist_permissions,
@@ -915,14 +916,14 @@ PERMISSION_CATALOG = [
         "key": "view_my_review_issues",
         "name": "查看页面",
         "category": "我的待复核问题",
-        "description": "质安部只查看督导中心转交的本部门待复核事项；其余处室分工不变，Root仍可查看全部。范围包含历史版本。",
+        "description": "片区经理与非油专员查看本片区非油初审事项；非油事业部可查看非油各复核阶段；质安部仅查看转交事项。范围包含历史版本。",
         "defaults": {"root": True, "supervisor": True, "quality_safety": True},
     },
     {
         "key": "submit_my_issue_reviews",
         "name": "提交复核",
         "category": "我的待复核问题",
-        "description": "在本页面允许的范围内提交复核；两类督导组还可转交质安部所属问题。关闭后保留只读查看能力，不授予问题审核权限。",
+        "description": "仅在角色负责的阶段提交复核。督导中心可转交质安问题，非油事业部可转交盛大现场复核。此权限不授予问题审核权。",
         "defaults": {"root": True, "supervisor": True, "quality_safety": True},
     },
     {
@@ -1160,8 +1161,8 @@ for permission_item in PERMISSION_CATALOG:
     defaults.setdefault("area_account", bool(defaults.get("quality_safety", False)))
 
 AREA_ACCOUNT_PERMISSION_OVERRIDES = {
-    "view_my_review_issues": False,
-    "submit_my_issue_reviews": False,
+    "view_my_review_issues": True,
+    "submit_my_issue_reviews": True,
     "view_all_inspection_issues": False,
     "view_all_inspection_records": False,
     "limit_issue_inspection_table_scope": False,
@@ -1180,7 +1181,7 @@ for permission_item in PERMISSION_CATALOG:
     for specialist in AREA_SPECIALIST_DEPARTMENTS:
         key = permission_item["key"]
         permission_item["defaults"][specialist] = restrict_specialist_permissions(
-            {key: permission_item["defaults"]["area_account"]}
+            {key: permission_item["defaults"]["area_account"]}, specialist
         )[key]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
@@ -2801,7 +2802,11 @@ def require_signed_api_token():
         and is_area_appeal_reviewer(user.get("role"))
     )
     if is_area_specialist(user.get("role")) and not (
-        area_appeal_decision or specialist_api_allowed(request.endpoint, request.path, request.method)
+        area_appeal_decision
+        or (user.get("role") == "area_non_oil" and request.endpoint in {
+            "get_my_issues", "get_pending_review_filter_options", "submit_review"
+        })
+        or specialist_api_allowed(request.endpoint, request.path, request.method)
     ):
         return jsonify(success=False, error="当前片区专员账号无权访问此功能。"), 403
     current_user_id = normalize_identity_for_compare(user["id"])
@@ -5820,7 +5825,7 @@ def role_default_permission(role, permission_key):
 def enforce_exclusive_permissions(permission_map, role=None):
     normalized = dict(permission_map or {})
     if is_area_specialist(role):
-        return restrict_specialist_permissions(normalized)
+        return restrict_specialist_permissions(normalized, role)
     for exclusive_keys in PERMISSION_EXCLUSIVE_GROUPS:
         active_keys = [key for key in exclusive_keys if normalized.get(key)]
         if len(active_keys) <= 1:
@@ -6430,12 +6435,15 @@ def can_view_rectification_queue(cur, user):
 
 
 def can_view_review_queue(cur, user):
-    return bool((is_supervisor_like(user) or has_role_default_checklist_scope(user))
+    return bool((is_supervisor_like(user) or has_role_default_checklist_scope(user)
+                or user.get("role") in non_oil_review.AREA_REVIEW_ROLES)
                 and has_permission(cur, user, "view_my_review_issues"))
 
 
 def review_queue_table_ids(cur, user):
     """None is root-only unrestricted access; all business roles use fixed IDs."""
+    if user.get("role") in non_oil_review.AREA_REVIEW_ROLES:
+        return get_role_default_inspection_table_ids(cur, "non_oil", include_inactive=True)
     if has_role_default_checklist_scope(user):
         return get_role_default_inspection_table_ids(cur, user["role"], include_inactive=True)
     if is_supervisor_role(user.get("role")):
@@ -6451,17 +6459,42 @@ def review_queue_table_ids(cur, user):
     return None if is_root_user(user) else []
 
 
-def review_queue_scope(cur, user):
-    """Same fixed perspective for list, facets, badges and review submission."""
+def non_oil_area_review_regions(cur, user):
+    return get_effective_station_region_scope_values(
+        cur, user, "limit_issue_station_region_scope", {"limit_issue_station_region_scope": True}
+    ) or set()
+
+
+def is_non_oil_review_table(issue):
+    return (normalize_checklist_scope_name(issue.get("table_name") or issue.get("inspection_table_name")),
+            normalize_checklist_mode(issue.get("checklist_mode"))) in NON_OIL_DEFAULT_CHECKLIST_SCOPE
+
+
+def review_queue_scope(cur, user, *, actionable=False):
+    """Apply role scope to the queue; department badges exclude read-only stages."""
     ids = review_queue_table_ids(cur, user)
     if ids is None:
         return "TRUE", []
     scope = "i.inspection_table_id = ANY(%s)"
-    if user["role"] == "quality_safety":
+    params = [ids]
+    role = user["role"]
+    if role == "quality_safety":
         scope += " AND i.quality_review_handoff_id IS NOT NULL"
-    elif is_supervisor_role(user["role"]):
+    elif role in non_oil_review.AREA_REVIEW_ROLES:
+        scope += """ AND COALESCE(i.non_oil_review_stage, 'area') = 'area'
+                     AND i.audit_status = 'approved'
+                     AND EXISTS (SELECT 1 FROM stations sr WHERE sr.id=i.station_id
+                     AND COALESCE(NULLIF(TRIM(sr.region), ''), '未填写片区')=ANY(%s))"""
+        params.append(sorted(non_oil_area_review_regions(cur, user)))
+    elif role == "non_oil" and actionable:
+        scope += " AND i.non_oil_review_stage = 'department'"
+    elif is_supervisor_role(role):
         scope += " AND i.quality_review_handoff_id IS NULL"
-    return scope, [ids]
+        non_oil_ids = get_role_default_inspection_table_ids(cur, "non_oil", include_inactive=True)
+        if non_oil_ids:
+            scope += " AND (NOT (i.inspection_table_id = ANY(%s)) OR i.non_oil_review_stage = 'field')"
+            params.append(non_oil_ids)
+    return scope, params
 
 
 def issue_in_review_queue_scope(cur, user, issue):
@@ -6470,8 +6503,13 @@ def issue_in_review_queue_scope(cur, user, issue):
         return True
     if issue.get("inspection_table_id") not in ids:
         return False
+    if user["role"] in non_oil_review.AREA_REVIEW_ROLES:
+        return (non_oil_review.stage_for(issue) == "area"
+                and normalize_station_region_value(issue.get("station_region")) in non_oil_area_review_regions(cur, user))
     if user["role"] == "quality_safety":
         return bool(issue.get("quality_review_handoff_id"))
+    if is_supervisor_role(user["role"]) and is_non_oil_review_table(issue):
+        return non_oil_review.stage_for(issue) == "field"
     return not (is_supervisor_role(user["role"]) and issue.get("quality_review_handoff_id"))
 
 
@@ -15733,7 +15771,7 @@ def get_my_pending_rectification_count_for_user(cur, user):
 def get_my_pending_review_count_for_user(cur, user):
     if not can_view_review_queue(cur, user):
         return 0
-    scope, params = review_queue_scope(cur, user)
+    scope, params = review_queue_scope(cur, user, actionable=True)
     cur.execute(f"SELECT COUNT(*) AS pending_count FROM issues i WHERE {PENDING_REVIEW_WHERE} AND {scope}", params)
     return int(cur.fetchone()["pending_count"] or 0)
 
@@ -26292,7 +26330,9 @@ def get_my_issues():
 
         if can_view_review_queue(cur, user):
             page, page_size = normalize_page_args(request.args.get('page'), request.args.get('page_size') or 20)
-            where_clause, params = build_pending_review_filters(request.args)
+            hide_inspector = (user["role"] in non_oil_review.AREA_REVIEW_ROLES
+                              and should_hide_inspector_contact_info(cur, user))
+            where_clause, params = build_pending_review_filters(request.args, hide_inspector=hide_inspector)
             scope, scope_params = review_queue_scope(cur, user)
             where_clause += " AND " + scope
             params.extend(scope_params)
@@ -26342,6 +26382,7 @@ def get_my_issues():
                     ins.inspector_completion_status AS inspection_completion_status,
                     i.inspection_table_id,
                     i.quality_review_handoff_id,
+                    i.non_oil_review_stage, i.non_oil_review_event_id,
                     handoff.note AS quality_review_handoff_reason,
                     COALESCE(handoff.actor_name, handoff.actor_username) AS quality_review_handoff_by,
                     TO_CHAR(handoff.created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') AS quality_review_handoff_at
@@ -26356,7 +26397,17 @@ def get_my_issues():
                 """, [*params, page_size, (page - 1) * page_size]
             )
             rows = cur.fetchall()
-            if rows and is_supervisor_role(user["role"]) and has_permission(cur, user, "submit_my_issue_reviews"):
+            submit_allowed = bool(rows and has_permission(cur, user, "submit_my_issue_reviews"))
+            for row in rows:
+                if is_non_oil_review_table(row):
+                    stage = non_oil_review.stage_for(row)
+                    row["non_oil_review_stage"] = stage
+                    row["non_oil_review_token"] = non_oil_review.token_for(row)
+                    row["review_can_act"] = (submit_allowed and row.get("audit_status") == "approved"
+                                              and non_oil_review.can_act(user["role"], stage))
+                    row["can_transfer_to_field"] = bool(row["review_can_act"] and user["role"] == "non_oil")
+                row.pop("non_oil_review_event_id", None)
+            if submit_allowed and is_supervisor_role(user["role"]):
                 quality_ids = set(get_role_default_inspection_table_ids(cur, "quality_safety", include_inactive=True))
                 for row in rows:
                     row["can_transfer_to_quality"] = (
@@ -26377,6 +26428,7 @@ def get_my_issues():
                         can_explicit_delete,
                         False,
                         can_explicit_change_inspector,
+                        hide_inspector_contact_info=hide_inspector,
                     )
                     for row in rows
                 ]
@@ -26404,7 +26456,7 @@ PENDING_REVIEW_JOINS = """
 PENDING_REVIEW_WHERE = "i.status = '待复核' AND COALESCE(i.audit_status, 'pending') <> 'rejected'"
 
 
-def build_pending_review_filters(source):
+def build_pending_review_filters(source, *, hide_inspector=False):
     # Preserve the review queue's scope; clients cannot replace its workflow status.
     allowed = ('issue_id', 'month', 'date_from', 'date_to', 'regions', 'stations',
                'station_manager', 'inspectors', 'inspection_tables', 'standard_id',
@@ -26429,8 +26481,8 @@ def build_pending_review_filters(source):
             datetime.strptime(value, '%Y-%m-%d')
             if filters['month']:
                 where.append(predicate); params.append(value)
-    append_issue_list_filter_clauses(where, params, filters)
-    keyword_clause, keyword_params = pending_review_keyword_clause(source.get('keyword'))
+    append_issue_list_filter_clauses(where, params, filters, hide_inspector)
+    keyword_clause, keyword_params = pending_review_keyword_clause(source.get('keyword'), hide_inspector=hide_inspector)
     if keyword_clause:
         where.append(keyword_clause)
         params.extend(keyword_params)
@@ -26458,6 +26510,8 @@ def get_pending_review_filter_options():
         row = cur.fetchone() or {}
         options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
                    for key in ('regions', 'stations', 'inspectors', 'inspection_tables')}
+        if user["role"] in non_oil_review.AREA_REVIEW_ROLES and should_hide_inspector_contact_info(cur, user):
+            options["inspectors"] = []
         scope_tables = []
         scope_ids = review_queue_table_ids(cur, user)
         if scope_ids is not None:
@@ -33568,7 +33622,10 @@ def get_inspection_issues(inspection_id):
 def can_user_view_issue_flow_history(cur, user, issue):
     if is_area_specialist(user.get("role")) and issue.get("audit_status") in (None, "pending"):
         return False
-    if has_role_default_checklist_scope(user) and can_view_review_queue(cur, user) and issue_in_review_queue_scope(cur, user, issue):
+    area_review = (user.get("role") in non_oil_review.AREA_REVIEW_ROLES
+                   and issue.get("status") == "待复核" and issue.get("audit_status") == "approved")
+    if ((has_role_default_checklist_scope(user) or area_review)
+            and can_view_review_queue(cur, user) and issue_in_review_queue_scope(cur, user, issue)):
         return True
     if is_supervisor_like(user):
         return True
@@ -33623,6 +33680,8 @@ def serialize_issue_flow_history_event(row):
         }[action_type]
     elif action_type == "rectification_submitted":
         action_label = "站经理提交整改"
+    elif action_type in non_oil_review.FLOW_LABELS:
+        action_label = non_oil_review.FLOW_LABELS[action_type]
     elif action_type == "review_transferred_to_quality":
         action_label = "转交质安部复核"
     elif action_type == 'review_submitted':
@@ -33631,7 +33690,7 @@ def serialize_issue_flow_history_event(row):
         action_label = "问题流转"
     event["action_label"] = action_label
     event["result"] = result or None
-    if action_type not in {"rectification_submitted", "review_submitted", "review_transferred_to_quality"}:
+    if action_type not in {"rectification_submitted", "review_submitted", "review_transferred_to_quality", *non_oil_review.FLOW_LABELS}:
         event["round_no"] = None
     event["actor_display_name"] = (
         str(event.get("actor_name") or "").strip()
@@ -33671,6 +33730,7 @@ def get_issue_flow_history(issue_id):
                 i.station_id,
                 i.inspection_table_id,
                 i.quality_review_handoff_id,
+                i.non_oil_review_stage,
                 i.audit_status,
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 s.region AS station_region,
@@ -33841,9 +33901,11 @@ def submit_rectification(issue_id):
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
                 i.inspection_id,
+                t.table_name, t.checklist_mode,
                 ins.sign_status AS inspection_sign_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN inspection_tables t ON t.id = i.inspection_table_id
             WHERE i.id = %s
             LIMIT 1
             FOR UPDATE OF i;
@@ -33915,7 +33977,7 @@ def submit_rectification(issue_id):
                 issue_id,
             ),
         )
-        record_issue_workflow_event(
+        event_id = record_issue_workflow_event(
             cur,
             issue_id,
             user,
@@ -33927,8 +33989,12 @@ def submit_rectification(issue_id):
             rectification_photo_path,
         )
 
+        non_oil = is_non_oil_review_table(issue)
+        if non_oil:
+            non_oil_review.advance(cur, issue_id, "area", event_id)
         conn.commit()
-        return jsonify({"success": True, "message": "整改提交成功，已转入待复核。"})
+        message = "整改提交成功，已转所属片区复核，非油事业部可同步查看。" if non_oil else "整改提交成功，已转入待复核。"
+        return jsonify({"success": True, "message": message})
     except Exception as e:
         if conn:
             conn.rollback()
@@ -33987,6 +34053,48 @@ def transfer_review_to_quality(issue_id):
         close_db_resources(cur, conn)
 
 
+@app.post("/api/issues/<int:issue_id>/non-oil-field-transfer")
+def transfer_non_oil_review_to_field(issue_id):
+    data = request.get_json(silent=True) or {}
+    reason = data.get("reason") if isinstance(data, dict) else None
+    if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000:
+        return jsonify(success=False, error="请填写现场复核原因，最多1000字。"), 400
+    user = get_current_request_user()
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if user["role"] != "non_oil" or not (can_view_review_queue(cur, user)
+                and has_permission(cur, user, "submit_my_issue_reviews")):
+            return jsonify(success=False, error="仅有复核权限的非油事业部账号可转交现场复核。"), 403
+        cur.execute("""SELECT i.status, i.audit_status, i.non_oil_review_stage, i.non_oil_review_event_id,
+                              t.table_name, t.checklist_mode
+                       FROM issues i JOIN inspection_tables t ON t.id=i.inspection_table_id
+                       WHERE i.id=%s FOR UPDATE OF i""", (issue_id,))
+        issue = cur.fetchone()
+        if not issue:
+            return jsonify(success=False, error="问题不存在。"), 404
+        if not is_non_oil_review_table(issue):
+            return jsonify(success=False, error="该问题不属于非油事业部复核范围。"), 403
+        if (issue["status"] != "待复核" or issue["audit_status"] != "approved"
+                or non_oil_review.stage_for(issue) != "department"
+                or str(data.get("non_oil_review_token", "")) != non_oil_review.token_for(issue)):
+            return jsonify(success=False, error="当前复核阶段已变化或尚未轮到终审，请刷新待办。"), 409
+        event_id = record_issue_workflow_event(
+            cur, issue_id, user, "non_oil_field_review_requested", "待复核", "待复核", None, reason.strip()
+        )
+        non_oil_review.advance(cur, issue_id, "field", event_id)
+        conn.commit()
+        return jsonify(success=True, message="已转交盛大（督导中心）现场复核；非油事业部仍可查看。")
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to transfer non-oil review for issue %s", issue_id)
+        return jsonify(success=False, error="现场复核转交失败，请稍后重试。"), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/issues/<int:issue_id>/review", methods=["POST"])
 def submit_review(issue_id):
     user_id = get_authenticated_request_user_id(request.form.get("user_id"))
@@ -34036,7 +34144,8 @@ def submit_review(issue_id):
         cur.execute(
             """
             SELECT i.id, i.inspection_table_id, i.status, i.rectification_result, i.quality_review_handoff_id,
-                COALESCE(i.audit_status, 'pending') AS audit_status, t.checklist_mode
+                i.non_oil_review_stage, i.non_oil_review_event_id,
+                COALESCE(i.audit_status, 'pending') AS audit_status, t.checklist_mode, t.table_name
             FROM issues i
             LEFT JOIN inspection_tables t ON t.id = i.inspection_table_id
             WHERE i.id = %s
@@ -34050,6 +34159,9 @@ def submit_review(issue_id):
         if not issue:
             return jsonify({"success": False, "error": "问题不存在。"}), 404
 
+        if user["role"] in non_oil_review.AREA_REVIEW_ROLES:
+            cur.execute("SELECT s.region FROM issues i JOIN stations s ON s.id=i.station_id WHERE i.id=%s", (issue_id,))
+            issue["station_region"] = (cur.fetchone() or {}).get("region")
         if not issue_in_review_queue_scope(cur, user, issue):
             return jsonify(success=False, error="该问题不在当前账号的复核范围，可能已转交或由对应部门处理。"), 403
 
@@ -34069,6 +34181,12 @@ def submit_review(issue_id):
                 400,
             )
 
+        non_oil_stage = non_oil_review.stage_for(issue) if is_non_oil_review_table(issue) else None
+        if non_oil_stage:
+            if not non_oil_review.can_act(user["role"], non_oil_stage):
+                return jsonify(success=False, error="当前阶段仅可查看，不能提交复核。"), 409
+            if request.form.get("non_oil_review_token", "") != non_oil_review.token_for(issue):
+                return jsonify(success=False, error="复核阶段或整改轮次已变化，请刷新后再提交。"), 409
         try:
             transition = resolve_issue_review_transition(review_result, issue.get("rectification_result") or "", issue.get("checklist_mode"))
         except ValueError as exc:
@@ -34079,6 +34197,16 @@ def submit_review(issue_id):
         review_photo_path = None
         if transition["photo_allowed"] and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")
+
+        if non_oil_stage in {"area", "field"} and not transition["returns_to_station"]:
+            action = "non_oil_area_review_passed" if non_oil_stage == "area" else "non_oil_field_review_passed"
+            event_id = record_issue_workflow_event(
+                cur, issue_id, user, action, "待复核", "待复核", review_result, review_note, review_photo_path
+            )
+            non_oil_review.advance(cur, issue_id, "department", event_id)
+            conn.commit()
+            return jsonify(success=True, status="待复核", returned_to_station=False,
+                           message="复核意见已保存，问题已流转至非油事业部终审。")
 
         cur.execute(
             """

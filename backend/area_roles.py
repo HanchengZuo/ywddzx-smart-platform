@@ -61,9 +61,10 @@ def is_area_specialist(role):
     return role in AREA_SPECIALIST_DEPARTMENTS
 
 
-def restrict_specialist_permissions(permissions):
+def restrict_specialist_permissions(permissions, role):
+    review_keys = {"view_my_review_issues", "submit_my_issue_reviews"} if role == "area_non_oil" else set()
     return {
-        key: key in SPECIALIST_FIXED_ENABLED or (
+        key: key in SPECIALIST_FIXED_ENABLED or key in review_keys or (
             key in AREA_SHARED_MENU_PERMISSIONS and bool(enabled)
         )
         for key, enabled in permissions.items()

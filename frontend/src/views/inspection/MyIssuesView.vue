@@ -7,7 +7,7 @@
           <h2 id="review-page-title">我的待复核问题</h2>
         </div>
         <div class="review-overview-count" aria-live="polite">
-          <span>待复核</span>
+          <span>{{ accountRole === 'non_oil' ? '待复核（含待前序处理）' : '待复核' }}</span>
           <div><strong>{{ loading ? '…' : listError ? '—' : resultTotal }}</strong><small> 条</small></div>
         </div>
       </div>
@@ -19,12 +19,14 @@
         </div>
         <template v-if="isSupervisionPerspective">
           <div class="scope-checklists" aria-label="督导中心复核覆盖部门">
-            <span>质安部</span><span>非油事业部</span>
+            <span>质安部</span><span>非油事业部 · 现场转交</span>
           </div>
-          <p>质安部所属问题由督导中心先复核；无法判断时可转交质安部。</p>
+          <p>质安问题可转交质安部；非油问题仅接收非油事业部转来的现场复核。</p>
         </template>
         <template v-else>
           <p v-if="accountRole === 'quality_safety'">仅显示督导中心转交给质安部的待复核问题。</p>
+          <p v-if="accountRole === 'non_oil'">站点提交后可查看；片区或盛大现场复核通过后，才可提交终审。</p>
+          <p v-if="areaReviewRoles.includes(accountRole)">仅复核本片区的非油检查问题。通过后交非油事业部终审，驳回直接退回站点。</p>
           <details v-if="scopeTables.length" class="review-scope-details">
             <summary>查看适用检查表（{{ scopeTables.length }}）</summary>
             <div class="scope-checklists" aria-label="当前复核视角检查表">
@@ -265,15 +267,16 @@
           </div>
 
           <div class="mobile-card-actions action-stack">
+            <span v-if="item.non_oil_review_stage" class="handoff-badge">{{ nonOilStageLabel(item) }}</span>
             <div v-if="item.quality_review_handoff_id" class="review-handoff-note">
               <strong>督导中心转交</strong>
               <span>{{ item.quality_review_handoff_reason }}</span>
             </div>
-            <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
-              :disabled="!canSubmitQueue || (currentRole === 'station_manager' && !isInspectionSigned(item))">
+            <button class="btn" :class="reviewIsReadOnly(item) ? 'btn-secondary' : 'btn-primary'" type="button" @click="openActionDrawer(item)"
+              :disabled="(!canSubmitQueue && !reviewIsReadOnly(item)) || (currentRole === 'station_manager' && !isInspectionSigned(item))">
               {{ currentRole === 'station_manager'
                 ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
-                : '提交复核' }}
+                : reviewActionText(item) }}
             </button>
             <button v-if="item.can_transfer_to_quality" class="btn btn-secondary" type="button" @click="openTransfer(item)">转交质安部</button>
             <template v-if="currentRole === 'station_manager' && item.can_appeal">
@@ -445,11 +448,12 @@
                 </td>
                 <td v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">
                   <div class="action-stack">
-                  <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
-                    :disabled="!canSubmitQueue || (currentRole === 'station_manager' && !isInspectionSigned(item))">
+                  <span v-if="item.non_oil_review_stage" class="handoff-badge">{{ nonOilStageLabel(item) }}</span>
+                  <button class="btn btn-sm" :class="reviewIsReadOnly(item) ? 'btn-secondary' : 'btn-primary'" type="button" @click="openActionDrawer(item)"
+                    :disabled="(!canSubmitQueue && !reviewIsReadOnly(item)) || (currentRole === 'station_manager' && !isInspectionSigned(item))">
                     {{ currentRole === 'station_manager'
                       ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
-                      : '提交复核' }}
+                      : reviewActionText(item) }}
                   </button>
                   <button v-if="item.can_transfer_to_quality" class="btn btn-secondary btn-sm" type="button" @click="openTransfer(item)">转交质安部</button>
                   <span v-if="item.quality_review_handoff_id" class="handoff-badge">督导中心转交</span>
@@ -518,14 +522,15 @@
     <div v-if="transferItem" class="drawer-mask">
       <form class="drawer-panel transfer-panel" role="dialog" aria-modal="true" aria-labelledby="transfer-title" @submit.prevent="submitTransfer">
         <div class="drawer-header">
-          <div><h3 id="transfer-title">转交质安部复核</h3><p>{{ transferItem.station }}｜问题 #{{ transferItem.id }}</p></div>
+          <div><h3 id="transfer-title">{{ transferItem.can_transfer_to_field ? '转交盛大现场复核' : '转交质安部复核' }}</h3><p>{{ transferItem.station }}｜问题 #{{ transferItem.id }}</p></div>
           <button class="drawer-close" type="button" aria-label="关闭转交" :disabled="transferring" @click="transferItem = null">×</button>
         </div>
         <div class="drawer-content">
-          <div class="review-handoff-note"><strong>转交后由质安部处理</strong><span>事项将移出督导中心待办。转交原因会写入流转记录，并通知有权限的质安部人员。</span></div>
+          <div v-if="transferItem.can_transfer_to_field" class="review-handoff-note"><strong>转交后由督导中心现场复核</strong><span>非油事业部可继续查看，现场通过后返回非油事业部终审；未通过则直接退回站点。</span></div>
+          <div v-else class="review-handoff-note"><strong>转交后由质安部处理</strong><span>事项将移出督导中心待办。转交原因会写入流转记录，并通知有权限的质安部人员。</span></div>
           <div class="form-item">
             <label for="quality-review-reason">转交原因</label>
-            <textarea id="quality-review-reason" ref="transferReasonInput" v-model="transferReason" rows="4" maxlength="1000" required :disabled="transferring" placeholder="请说明需要质安部进一步判断的事项"></textarea>
+            <textarea id="quality-review-reason" ref="transferReasonInput" v-model="transferReason" rows="4" maxlength="1000" required :disabled="transferring" placeholder="请说明需要进一步核对的事项"></textarea>
           </div>
           <p v-if="transferError" class="queue-error" role="alert">{{ transferError }}</p>
           <div class="drawer-actions">
@@ -548,13 +553,23 @@
       <div class="drawer-panel">
         <div class="drawer-header">
           <div>
-            <h3>{{ currentRole === 'station_manager' ? '提交整改' : '提交问题复核' }}</h3>
+            <h3>{{ currentRole === 'station_manager' ? '提交整改' : reviewActionText(actionDrawer.item) }}</h3>
             <p>{{ actionDrawer.item?.station }}｜规范ID {{ actionDrawer.item?.standard_id || '暂无' }}</p>
           </div>
           <button class="drawer-close" type="button" @click="closeActionDrawer">×</button>
         </div>
 
         <div class="drawer-content" v-if="actionDrawer.item">
+          <div v-if="actionDrawer.item.non_oil_review_stage" class="review-handoff-note">
+            <strong>{{ nonOilStageLabel(actionDrawer.item) }}</strong>
+            <span v-if="reviewIsReadOnly(actionDrawer.item)">当前仅可查看整改材料和流转记录。</span>
+            <span>整改结果：{{ rectificationResultLabel(actionDrawer.item.rectification_result) }} · {{ actionDrawer.item.rectification_at || '时间未记录' }}</span>
+            <span>整改说明：{{ actionDrawer.item.rectification_note || '未填写' }}</span>
+            <button v-if="actionDrawer.item.rectification_photo" class="drawer-photo-trigger" type="button"
+              @click="preview(resolveImage(actionDrawer.item.rectification_photo), '整改照片')">
+              <img :src="resolveImage(actionDrawer.item.rectification_photo)" class="drawer-preview-thumb" alt="整改照片，点击放大" />
+            </button>
+          </div>
           <div v-if="actionDrawer.item.quality_review_handoff_id" class="review-handoff-note">
             <strong>督导中心转交 · {{ actionDrawer.item.quality_review_handoff_by || '复核人员' }}</strong>
             <span>{{ actionDrawer.item.quality_review_handoff_reason }}</span>
@@ -575,8 +590,8 @@
 
           <template v-if="currentRole === 'station_manager'">
             <div class="form-item">
-              <label>整改结果</label>
-              <select v-model="actionForm.rectificationResult">
+              <label for="rectification-result">整改结果 <span class="required-field-tag">必填</span></label>
+              <select id="rectification-result" v-model="actionForm.rectificationResult" required>
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
                 <option value="站经无法整改">站级无法整改</option>
@@ -584,14 +599,14 @@
             </div>
 
             <div class="form-item">
-              <label>整改说明</label>
-              <textarea v-model="actionForm.rectificationNote" rows="4" placeholder="请填写整改说明"></textarea>
+              <label for="rectification-note">整改说明 <span class="required-field-tag">必填</span></label>
+              <textarea id="rectification-note" v-model="actionForm.rectificationNote" required rows="4" placeholder="请填写整改情况；无法整改时请说明原因"></textarea>
             </div>
 
             <div v-if="shouldShowRectificationPhotoUpload" class="form-item">
-              <label>整改照片</label>
+              <label for="rectification-photo-upload">整改照片 <span class="required-field-tag">必填</span></label>
               <div class="drawer-upload-card">
-                <input id="rectification-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
+                <input id="rectification-photo-upload" class="drawer-upload-input" type="file" accept="image/*" aria-required="true"
                   @change="handleRectificationFileChange" />
                 <input id="rectification-photo-camera" class="drawer-upload-input" type="file" accept="image/*"
                   capture="environment" @change="handleRectificationFileChange" />
@@ -629,18 +644,18 @@
                 </div>
               </div>
             </div>
-            <div v-else class="drawer-photo-skip-note">
+            <div v-else-if="isUnableRectification(actionForm.rectificationResult)" class="drawer-photo-skip-note">
               已选择站级无法整改，无需上传整改照片，提交后等待问题复核。
             </div>
 
           </template>
 
-          <template v-else>
+          <template v-else-if="!reviewIsReadOnly(actionDrawer.item)">
             <div class="form-item">
               <label>问题复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
-                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
+                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ isNonOilPreliminary(actionDrawer.item) ? result : reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
               </select>
             </div>
 
@@ -669,13 +684,15 @@
           </template>
 
           <div class="drawer-actions">
-            <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction || reviewPhotoProcessing">
+            <button v-if="!reviewIsReadOnly(actionDrawer.item)" class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction || reviewPhotoProcessing">
               <span v-if="submittingAction" class="submit-spinner" aria-hidden="true"></span>{{ submittingAction ? '正在提交，请稍候…' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
             </button>
             <button v-if="actionDrawer.item.can_transfer_to_quality" class="btn btn-secondary" type="button"
               :disabled="submittingAction || reviewPhotoProcessing" @click="openTransferFromReview">转交质安部</button>
+            <button v-if="actionDrawer.item.can_transfer_to_field && !reviewIsReadOnly(actionDrawer.item)" class="btn btn-secondary" type="button"
+              :disabled="submittingAction || reviewPhotoProcessing" @click="openTransferFromReview">转交盛大现场复核</button>
             <button class="btn btn-secondary" type="button" @click="closeActionDrawer"
-              :disabled="submittingAction">取消</button>
+              :disabled="submittingAction">{{ reviewIsReadOnly(actionDrawer.item) ? '关闭' : '取消' }}</button>
           </div>
 
         </div>
@@ -719,7 +736,7 @@ import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isSupervisorRole } from '@/utils/roles.js'
-import { canSubmitIssueQueue, reviewQueuePerspective } from '@/utils/issueQueueAccess.js'
+import { areaReviewRoles, canSubmitIssueQueue, reviewQueuePerspective } from '@/utils/issueQueueAccess.js'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
@@ -776,6 +793,14 @@ const currentRole = computed(() => props.queue === 'rectification' ? 'station_ma
 let queuePermissions = {}
 try { queuePermissions = JSON.parse(localStorage.getItem('permissions') || '{}') } catch { /* Server remains authoritative. */ }
 const canSubmitQueue = computed(() => canSubmitIssueQueue(accountRole, queuePermissions, props.queue))
+const reviewIsReadOnly = item => Boolean(item?.non_oil_review_stage && (!item.review_can_act || !canSubmitQueue.value))
+const isNonOilPreliminary = item => ['area', 'field'].includes(item?.non_oil_review_stage)
+const nonOilStageLabel = item => ({
+  area: '等待片区复核', department: '等待非油事业部终审', field: '等待盛大现场复核',
+})[item?.non_oil_review_stage] || ''
+const reviewActionText = item => reviewIsReadOnly(item) ? '查看整改与流转' : ({
+  area: '提交片区复核', department: '提交终审', field: '提交现场复核',
+})[item?.non_oil_review_stage] || '提交复核'
 const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : reviewQueuePerspective(accountRole))
 const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
 const myIssuesEmptyDescription = computed(() => (
@@ -1240,10 +1265,12 @@ const actionForm = ref({
   reviewPhotoFile: null
 })
 
-const skipsIssuePhotoUpload = value => isUnableRectification(value) || isReviewReturned(value) || value === '通过站级无法整改'
-const shouldShowRectificationPhotoUpload = computed(() => !isUnableRectification(actionForm.value.rectificationResult))
+const shouldShowRectificationPhotoUpload = computed(() => actionForm.value.rectificationResult === '已整改')
 const shouldShowReviewPhotoUpload = computed(() => reviewAllowsPhoto(actionForm.value.reviewResult))
 const reviewOutcomeHint = computed(() => {
+  if (actionForm.value.reviewResult && !isReviewReturned(actionForm.value.reviewResult) && isNonOilPreliminary(actionDrawer.value.item)) {
+    return { type: 'closed', title: '交非油事业部终审', description: '本轮意见将独立留痕，问题仍为待复核，最终结论由非油事业部提交。' }
+  }
   if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。问题复核照片选填。' }
   if (isReviewReturned(actionForm.value.reviewResult)) {
     return {
@@ -1359,19 +1386,23 @@ const openTransferFromReview = () => {
 }
 const submitTransfer = async () => {
   if (transferring.value || !transferItem.value || !transferReason.value.trim()) return
-  const id = transferItem.value.id
+  const item = transferItem.value
+  const id = item.id
   const position = captureIssueListPosition(pageRef.value, id)
   transferring.value = true
   transferError.value = ''
   try {
-    const { data } = await axios.post('/api/issues/' + id + '/review-transfer', { reason: transferReason.value.trim() })
+    const endpoint = item.can_transfer_to_field ? 'non-oil-field-transfer' : 'review-transfer'
+    const payload = { reason: transferReason.value.trim() }
+    if (item.can_transfer_to_field) payload.non_oil_review_token = item.non_oil_review_token
+    const { data } = await axios.post(`/api/issues/${id}/${endpoint}`, payload)
     transferItem.value = null
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
     await fetchMyIssues({ preserveList: true })
     fetchReviewOptions()
     await nextTick()
     if (initialized) restoreIssueListPosition(pageRef.value, position)
-    showActionToast(data.message || '已转交质安部。', 'success')
+    showActionToast(data.message || (item.can_transfer_to_field ? '已转交盛大现场复核。' : '已转交质安部。'), 'success')
   } catch (error) {
     transferError.value = error?.response?.data?.error || '转交失败，请稍后重试。'
   } finally {
@@ -1425,7 +1456,7 @@ const fetchIssueFlowHistory = async (issueId) => {
 }
 
 const openActionDrawer = (item) => {
-  if (!canSubmitQueue.value) {
+  if (!canSubmitQueue.value && !reviewIsReadOnly(item)) {
     showActionToast('当前账号只有查看权限，不能提交处理。', 'error')
     return
   }
@@ -1510,7 +1541,7 @@ const clearReviewFile = () => {
 watch(
   () => actionForm.value.rectificationResult,
   (value) => {
-    if (skipsIssuePhotoUpload(value)) {
+    if (isUnableRectification(value)) {
       clearRectificationFile()
     }
   }
@@ -1542,7 +1573,7 @@ const showActionToast = (message, type = 'info') => {
 
 const submitAction = async () => {
   if (!actionDrawer.value.item || submittingAction.value || reviewPhotoProcessing.value) return
-  if (!canSubmitQueue.value) {
+  if (!canSubmitQueue.value || reviewIsReadOnly(actionDrawer.value.item)) {
     showActionToast('当前账号没有提交处理权限。', 'error')
     return
   }
@@ -1571,7 +1602,7 @@ const submitAction = async () => {
         showActionToast('请填写整改说明。', 'error')
         return
       }
-      const rectificationPhotoRequired = !skipsIssuePhotoUpload(actionForm.value.rectificationResult)
+      const rectificationPhotoRequired = shouldShowRectificationPhotoUpload.value
       if (rectificationPhotoRequired && !actionForm.value.rectificationPhotoFile) {
         showActionToast('请上传整改照片。', 'error')
         return
@@ -1608,6 +1639,7 @@ const submitAction = async () => {
     formData.append('user_id', userId)
     formData.append('review_result', actionForm.value.reviewResult)
     formData.append('review_note', actionForm.value.reviewNote)
+    if (item.non_oil_review_stage) formData.append('non_oil_review_token', item.non_oil_review_token)
     if (reviewAllowsPhoto(actionForm.value.reviewResult) && actionForm.value.reviewPhotoFile) {
       formData.append('review_photo', actionForm.value.reviewPhotoFile)
     }
@@ -3109,7 +3141,8 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.optional-field-tag {
+.optional-field-tag,
+.required-field-tag {
   display: inline-flex;
   align-items: center;
   min-height: 20px;
@@ -3120,6 +3153,11 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 11px;
   font-weight: 800;
+}
+
+.required-field-tag {
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .field-help-text {

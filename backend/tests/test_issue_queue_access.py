@@ -18,11 +18,13 @@ class QueuePermissionTests(unittest.TestCase):
         for path in ('/api/my-rectification-issues','/api/my-review-issues','/api/my-review-issues/filter-options'):
             self.assertEqual(client.get(path).status_code,401)
         self.assertEqual(client.post('/api/issues/44/review-transfer',json={'reason':'fixture'}).status_code,401)
+        self.assertEqual(client.post('/api/issues/48/non-oil-field-transfer',json={'reason':'fixture'}).status_code,401)
 
-    def test_default_access_preserves_existing_roles_and_opens_department_review_only(self):
+    def test_default_access_preserves_existing_roles_and_opens_non_oil_area_review(self):
         for role in api.ROLE_OPTIONS:
             with self.subTest(role=role):
-                review = role in {'root','supervisor','supervisor_manager',*api.ROLE_DEFAULT_CHECKLIST_SCOPES}
+                review = role in {'root','supervisor','supervisor_manager',*api.ROLE_DEFAULT_CHECKLIST_SCOPES,
+                                  *api.non_oil_review.AREA_REVIEW_ROLES}
                 rectify = role in {'root','station_manager'}
                 for key in ('view_my_review_issues','submit_my_issue_reviews'):
                     self.assertEqual(api.role_default_permission(role,key), review)
@@ -39,7 +41,8 @@ class QueuePermissionTests(unittest.TestCase):
             self.assertFalse(api.can_view_rectification_queue(MagicMock(),dict(id=2,role='station_manager')))
         with patch.object(api,'has_permission',return_value=True):
             self.assertFalse(api.can_view_review_queue(MagicMock(),dict(id=1,role='station_manager')))
-            self.assertFalse(api.can_view_review_queue(MagicMock(),dict(id=2,role='area_account')))
+            self.assertTrue(api.can_view_review_queue(MagicMock(),dict(id=2,role='area_account')))
+            self.assertFalse(api.can_view_review_queue(MagicMock(),dict(id=2,role='area_oil_gas')))
             self.assertFalse(api.can_view_rectification_queue(MagicMock(),dict(id=3,role='finance')))
 
     def test_saved_role_and_personal_switches_keep_existing_precedence(self):
@@ -133,6 +136,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         review_tests.UnableClosureDatabaseTests.setUp(self)
         self.user=dict(id=17,username='reviewer',real_name='复核人员',role='quality_safety',station_id=1)
         self.overrides={}
+        self.regions={'片区甲'}
         self.cur.execute("""
           ALTER TABLE users ADD COLUMN station_id int DEFAULT 1;
           ALTER TABLE inspection_tables ADD COLUMN is_active boolean DEFAULT true;
@@ -171,6 +175,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.stack.enter_context(patch.object(api,'get_db_connection',side_effect=self.connect))
         self.stack.enter_context(patch.object(api,'get_authenticated_request_user_id',return_value=17))
         self.stack.enter_context(patch.object(api,'get_current_request_user',side_effect=lambda:self.user))
+        self.stack.enter_context(patch.object(api,'non_oil_area_review_regions',side_effect=lambda *_:self.regions))
         self.stack.enter_context(patch.object(api,'has_permission',
             side_effect=lambda _,user,key:self.overrides.get(key,api.role_default_permission(user['role'],key))))
         for name in ('ensure_issue_inspector_schema','ensure_inspection_completion_schema',
@@ -179,7 +184,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.stack.enter_context(patch.object(api,'fetch_internal_standard_tags_by_codes',return_value={}))
         for name in ('can_edit_inspection_issues','can_delete_inspection_issues','can_change_issue_inspector'):
             self.stack.enter_context(patch.object(api,name,return_value=False))
-        self.stack.enter_context(patch.object(api,'normalize_issue_row_for_response',side_effect=lambda row,*_:dict(row)))
+        self.stack.enter_context(patch.object(api,'normalize_issue_row_for_response',side_effect=lambda row,*_,**kwargs:dict(row)))
         self.saved=self.stack.enter_context(patch.object(api,'save_uploaded_file',return_value='rectifications/test.jpg'))
 
     def role(self,role):
@@ -198,6 +203,113 @@ class QueueScopeDatabaseTests(unittest.TestCase):
             value=api.transfer_review_to_quality(issue_id)
             response,status=value if isinstance(value,tuple) else (value,200)
             return response.get_json(),status
+
+    def non_oil_review(self, token='0', result='整改通过'):
+        return self.call('/api/issues/48/review', lambda:api.submit_review(48), method='POST',
+                         data={'review_result':result, 'non_oil_review_token':token, 'review_note':'复核意见'})
+
+    def transfer_to_field(self, token):
+        with api.app.test_request_context('/api/issues/48/non-oil-field-transfer', method='POST',
+                                          json={'reason':'请现场核对', 'non_oil_review_token':token}):
+            result=api.transfer_non_oil_review_to_field(48)
+            response,status=result if isinstance(result,tuple) else (result,200)
+            return response.get_json(),status
+
+    def non_oil_row(self):
+        body,status=self.call('/api/my-review-issues?issue_id=48',api.get_my_issues)
+        self.assertEqual(status,200,body)
+        return next(iter(body['items']), None)
+
+    def test_non_oil_handoff_preserves_pending_state_and_finalizes_only_after_field_review(self):
+        self.role('non_oil')
+        row=self.non_oil_row()
+        self.assertEqual(row['non_oil_review_stage'],'area')
+        self.assertFalse(row['review_can_act'])
+        self.assertEqual(self.non_oil_review()[1],409)
+        self.assertEqual(self.transfer_to_field('0')[1],409)
+        for role in ('supervisor','supervisor_manager'):
+            self.role(role)
+            self.assertIsNone(self.non_oil_row())
+            self.assertEqual(self.non_oil_review()[1],403)
+        self.role('area_non_oil')
+        self.regions={'片区乙'}
+        self.assertIsNone(self.non_oil_row())
+        self.assertEqual(self.non_oil_review()[1],403)
+        self.regions={'片区甲'}
+        self.assertTrue(self.non_oil_row()['review_can_act'])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses=list(pool.map(lambda _:self.non_oil_review()[1], range(2)))
+        self.assertEqual(sorted(statuses),[200,403])
+        self.assertIsNone(self.non_oil_row())
+        self.role('non_oil')
+        row=self.non_oil_row()
+        self.assertTrue(row['can_transfer_to_field'])
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),1)
+        first_department_token=row['non_oil_review_token']
+        self.assertEqual(self.transfer_to_field(first_department_token)[1],200)
+        self.assertEqual(self.transfer_to_field(first_department_token)[1],409)
+        self.assertFalse(self.non_oil_row()['review_can_act'])
+        self.role('supervisor')
+        row=self.non_oil_row()
+        self.assertEqual(row['non_oil_review_stage'],'field')
+        self.assertTrue(row['review_can_act'])
+        body,status=self.non_oil_review(row['non_oil_review_token'])
+        self.assertEqual((status,body['status']),(200,'待复核'))
+        self.cur.execute('SELECT review_result,review_at FROM issues WHERE id=48')
+        self.assertEqual(self.cur.fetchone(),dict(review_result=None,review_at=None))
+        self.role('non_oil')
+        self.assertEqual(self.non_oil_review(first_department_token)[1],409)
+        body,status=self.non_oil_review(self.non_oil_row()['non_oil_review_token'])
+        self.assertEqual((status,body['status']),(200,'已闭环'))
+        self.cur.execute('SELECT non_oil_review_stage,non_oil_review_event_id FROM issues WHERE id=48')
+        self.assertEqual(self.cur.fetchone(),dict(non_oil_review_stage=None,non_oil_review_event_id=None))
+        self.cur.execute('SELECT action_type,actor_role,round_no FROM inspection_issue_flow_history WHERE issue_id=48 ORDER BY id')
+        self.assertEqual([(r['action_type'],r['actor_role'],r['round_no']) for r in self.cur.fetchall()],[
+            ('non_oil_area_review_passed','area_non_oil',1), ('non_oil_field_review_requested','non_oil',1),
+            ('non_oil_field_review_passed','supervisor',1), ('review_submitted','non_oil',1)])
+
+    def test_non_oil_unable_passes_are_preliminary_and_all_rejections_return_to_station(self):
+        for stage in ('area','department','field'):
+            with self.subTest(stage=stage):
+                self.cur.execute("UPDATE issues SET status='待整改' WHERE id=48")
+                self.admin.commit()
+                self.role('station_manager')
+                path='/api/issues/48/rectification'
+                submit=lambda:api.submit_rectification(48)
+                for data,error in [
+                    ({'rectification_result':'站级无法整改'},'请填写整改说明。'),
+                    ({'rectification_result':'已整改','rectification_note':'修好了'},'请上传整改照片。'),
+                ]:
+                    body,status=self.call(path,submit,method='POST',data=data)
+                    self.assertEqual((status,body['error']),(400,error))
+                _,status=self.call(path,submit,method='POST',
+                                  data={'rectification_result':'站级无法整改','rectification_note':'需上级处理'})
+                self.assertEqual(status,200)
+                self.role('area_account')
+                token=self.non_oil_row()['non_oil_review_token']
+                self.assertNotEqual(token,'0')
+                if stage != 'area':
+                    body,status=self.non_oil_review(token,'通过站级无法整改' if stage=='field' else '整改通过')
+                    self.assertEqual((status,body['status']),(200,'待复核'))
+                    self.role('non_oil')
+                    token=self.non_oil_row()['non_oil_review_token']
+                if stage == 'field':
+                    self.assertEqual(self.transfer_to_field(token)[1],200)
+                    self.role('supervisor_manager')
+                    token=self.non_oil_row()['non_oil_review_token']
+                body,status=self.non_oil_review(token,'驳回站级无法整改')
+                self.assertEqual((status,body['status'],body['returned_to_station']),(200,'待整改',True))
+                self.cur.execute('SELECT non_oil_review_stage,review_result FROM issues WHERE id=48')
+                self.assertEqual(self.cur.fetchone(),dict(non_oil_review_stage=None,review_result='驳回站级无法整改'))
+
+    def test_non_oil_history_and_stage_roll_back_together(self):
+        self.role('area_account')
+        with patch.object(api.non_oil_review,'advance',side_effect=RuntimeError('fixture failure')):
+            self.assertEqual(self.non_oil_review()[1],500)
+        self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=48")
+        self.assertEqual(self.cur.fetchone()['n'],0)
+        self.assertEqual(self.non_oil_row()['non_oil_review_token'],'0')
+        self.assertEqual(self.non_oil_review()[1],200)
 
     def prepare_handoff_outbox(self):
         self.role('supervisor_manager')
@@ -239,7 +351,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchall(),[dict(user_id=18,status='queued')])
         self.assertTrue(delivery_allowed(self.cur,messages[0],18,lambda *args:[18]))
         self.assertFalse(delivery_allowed(self.cur,messages[0],18,lambda *args:[]))
-        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),2)
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),1)
         self.assertEqual(self.call('/api/issues/44/review',lambda:api.submit_review(44),
                                   method='POST',data={'review_result':'整改通过'})[1],403)
         self.role('quality_safety')
@@ -259,7 +371,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         self.admin.commit()
         self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),0)
         self.role('supervisor')
-        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),3)
+        self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),2)
         self.cur.execute("SELECT action_type FROM inspection_issue_flow_history WHERE issue_id=44 ORDER BY id")
         self.assertEqual([r['action_type'] for r in self.cur.fetchall()],['review_transferred_to_quality','review_submitted'])
 
@@ -295,8 +407,9 @@ class QueueScopeDatabaseTests(unittest.TestCase):
 
     def test_all_departments_get_only_their_tables_in_list_filters_and_badges(self):
         for role,ids in [('quality_safety',set()),('finance',{45}),('development_plan',{46}),
-                         ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44,48}),
-                         ('supervisor_manager',{42,44,48}),('root',{42,44,45,46,47,48})]:
+                         ('oil_gas',{47}),('non_oil',{48}),('supervisor',{42,44}),
+                         ('supervisor_manager',{42,44}),('root',{42,44,45,46,47,48}),
+                         ('area_account',{48}),('area_non_oil',{48})]:
             with self.subTest(role=role):
                 self.role(role)
                 body,status=self.call('/api/my-review-issues',api.get_my_issues)
@@ -308,9 +421,10 @@ class QueueScopeDatabaseTests(unittest.TestCase):
                 self.assertEqual(set(facets['filter_options']['inspection_tables']),
                                  {r['inspection_table_name'] for r in body['items']})
                 if role not in ('root', 'quality_safety'):
-                    self.assertEqual({r['table_name'] for r in facets['scope_tables']},
-                                     {r['inspection_table_name'] for r in body['items']})
-                self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),len(ids))
+                    self.assertTrue({r['inspection_table_name'] for r in body['items']}.issubset(
+                        {r['table_name'] for r in facets['scope_tables']}))
+                self.assertEqual(api.get_my_pending_review_count_for_user(self.cur,self.user),
+                                 0 if role == 'non_oil' else len(ids))
         self.role('quality_safety')
         body,status=self.call('/api/my-review-issues?issue_id=45&inspection_tables=["财务检查表（现场）"]',
                               api.get_my_issues)

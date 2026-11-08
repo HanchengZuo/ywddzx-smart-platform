@@ -772,7 +772,7 @@ const scopedPermissionLayouts = {
   '我的待复核问题': {
     scopeKeys: ['view_my_review_issues'], actionKeys: ['submit_my_issue_reviews'],
     readonlyItems: [{ key: 'review_queue_scope', name: '按角色固定范围，不可跨部门扩大',
-      description: '两类督导组账号共用督导中心视角，可将质安部所属待复核事项转交质安部。质安部仅处理已转交事项；其他处室及历史版本分工不变。Root仍可查看全部，查看和提交可分别关闭。' }]
+      description: '片区经理与非油专员仅初审本片区非油问题；非油事业部可提前查看、负责终审，也可转交督导中心现场复核。质安部仍只处理督导中心转交的质安事项。Root可查看全部，非油终审须由非油事业部办理。' }]
   },
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],

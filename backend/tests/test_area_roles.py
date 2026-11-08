@@ -56,7 +56,7 @@ class AreaPolicyTests(unittest.TestCase):
                     permissions = api.get_effective_permissions(None, {'id': 17, 'role': role})
                     self.assertTrue(all(permissions[key] == enable for key in AREA_SHARED_MENU_PERMISSIONS))
                     self.assertTrue(permissions['limit_issue_inspection_table_scope'])
-                    self.assertFalse(permissions['view_my_review_issues'])
+                    self.assertEqual(permissions['view_my_review_issues'], role == 'area_non_oil')
 
     def test_certificate_default_scope_is_the_same_for_all_area_roles(self):
         for role in ('area_account', *AREA_SPECIALIST_DEPARTMENTS):
@@ -141,7 +141,7 @@ class AreaScopeDatabaseTests(unittest.TestCase):
             user = {'id': 17, 'role': role}
             with self.subTest(role=role):
                 self.assertFalse(api.has_permission(self.cur, user, 'manage_users'))
-                self.assertFalse(api.can_view_review_queue(self.cur, user))
+                self.assertEqual(api.can_view_review_queue(self.cur, user), role == 'area_non_oil')
                 where, params = api.build_issue_list_visibility_scope(self.cur, user)
                 self.cur.execute('SELECT i.id FROM issues i JOIN stations s ON s.id=i.station_id '
                                  'JOIN inspections ins ON ins.id=i.inspection_id WHERE '
