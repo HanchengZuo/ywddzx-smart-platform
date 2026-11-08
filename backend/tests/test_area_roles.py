@@ -11,6 +11,7 @@ from psycopg2.extras import RealDictCursor
 import app as api
 from area_roles import AREA_SPECIALIST_DEPARTMENTS, require_specialist_region, specialist_can_read_media
 from issue_appeals import appeal_scope, can_decide
+from quality_deadlines import responsible_users
 
 
 class AreaPolicyTests(unittest.TestCase):
@@ -37,7 +38,16 @@ class AreaPolicyTests(unittest.TestCase):
             for path in ('/api/stations', '/api/inspection-table-standards?table_id=1',
                          '/api/inspection-reports/status', '/api/my-review-issues'):
                 self.assertEqual(client.get(path, headers=headers).status_code, 403)
-            self.assertEqual(client.post('/api/issue-appeals/5/decision', headers=headers).status_code, 403)
+            with patch.dict(api.app.view_functions, {'decide_issue_appeal': lambda appeal_id: ('handler reached', 200)}):
+                self.assertEqual(client.post('/api/issue-appeals/5/decision', headers=headers).status_code, 200)
+                for role in ('area_oil_gas', 'area_non_oil'):
+                    user['role'] = role
+                    self.assertEqual(client.post('/api/issue-appeals/5/decision', headers=headers).status_code, 403)
+
+    def test_security_filter_accepts_family_and_exact_child(self):
+        accounts = [{'role': role} for role in ('area_account', 'area_safety', 'area_non_oil', 'quality_safety')]
+        self.assertEqual(api.filter_security_accounts(accounts, {'role': 'area_family'}), accounts[:3])
+        self.assertEqual(api.filter_security_accounts(accounts, {'role': 'area_safety'}), accounts[1:2])
 
 
 @unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')
@@ -105,14 +115,42 @@ class AreaScopeDatabaseTests(unittest.TestCase):
                 self.assertFalse(specialist_can_read_media(self.cur, 'issues/pending.jpg', regions, tables))
                 self.assertEqual(specialist_can_read_media(self.cur, 'issues/highlight.jpg', regions, tables), role == 'area_safety')
 
-    def test_appeals_intersect_scope_without_granting_review_authority(self):
+    def test_safety_first_review_requires_matching_region_and_table(self):
         core = SimpleNamespace(**vars(api))
         user = {'id': 17, 'role': 'area_safety'}
         where, params = appeal_scope(core, self.cur, user)
         self.assertEqual(len(where), 2)
         self.assertEqual(params[0], ['浦东'])
         self.assertEqual(set(params[1]), {3, 4})
-        self.assertFalse(can_decide(core, self.cur, user, {'status': 'area_pending', 'region': '浦东'}))
+        appeal = {'status': 'area_pending', 'region': '浦东', 'inspection_table_id': 3}
+        self.assertTrue(can_decide(core, self.cur, user, appeal))
+        self.assertTrue(can_decide(core, self.cur, user, dict(appeal, inspection_table_id=4)))
+        self.assertFalse(can_decide(core, self.cur, user, dict(appeal, region='松金')))
+        self.assertFalse(can_decide(core, self.cur, user, dict(appeal, inspection_table_id=5)))
+        self.assertFalse(can_decide(core, self.cur, user, dict(appeal, status='quality_pending')))
+        self.assertFalse(can_decide(core, self.cur, dict(user, role='area_oil_gas'), appeal))
+
+    def test_deadline_responsibility_includes_only_eligible_first_reviewers(self):
+        self.cur.execute("""
+            CREATE TABLE users(id int, username text, real_name text, role text, station_id int, account_status text);
+            INSERT INTO users VALUES
+                (17,'safety','安全专员','area_safety',NULL,'active'),
+                (18,'manager','片区经理','area_account',NULL,'active'),
+                (19,'other_area','其他片区','area_safety',NULL,'active'),
+                (20,'non_oil','非油专员','area_non_oil',NULL,'active'),
+                (21,'suspended','停用安全专员','area_safety',NULL,'suspended');
+            INSERT INTO user_station_region_scopes VALUES
+                (18,'limit_issue_station_region_scope','浦东'),
+                (19,'limit_issue_station_region_scope','松金'),
+                (20,'limit_issue_station_region_scope','浦东'),
+                (21,'limit_issue_station_region_scope','浦东');
+        """)
+        core = SimpleNamespace(**vars(api))
+        with patch.object(api, 'get_role_station_region_scope_overrides', return_value=[]):
+            users = responsible_users(self.cur, core, 'area_pending', 1, '浦东', 3)
+            self.assertEqual([user['id'] for user in users], [17, 18])
+            users = responsible_users(self.cur, core, 'area_pending', 1, '浦东', 5)
+            self.assertEqual([user['id'] for user in users], [18])
 
     def test_missing_or_invalid_binding_fails_closed(self):
         user = {'id': 18, 'role': 'area_safety'}

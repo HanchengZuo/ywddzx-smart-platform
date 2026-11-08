@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.3.1', date: '2026-11-08', title: '片区角色分组与申诉初审',
+    summary: '角色入口按片区账号及其子角色展示；安全专员可初审本片区申诉。',
+    items: ['新增、编辑、角色模板、用户筛选及 Root 切换按「片区账号」展开子角色。', '片区经理和安全专员可初审本片区申诉；安全专员仍受质安部检查表范围限制，质安部终审不变。'] },
   { version: 'v13.3', date: '2026-11-08', title: '片区经理与专员角色',
     summary: '原片区账号沿用原权限，新增三个按所属片区和部门检查表隔离数据的专员角色。',
     items: ['原片区账号更名为片区经理，保留账号、片区归属、权限和申诉初审流程。', '新增油气、非油、安全专员。用户数据管理中选角色并绑定片区；专员只读范围为所属片区与对应部门检查表（含历史版本）的交集。'] },

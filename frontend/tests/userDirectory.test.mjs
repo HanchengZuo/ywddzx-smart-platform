@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions, directoryPageNumbers, filterDirectoryUsers, permissionConfiguration, permissionScopeDetail, permissionSummary, roleLabelFor, userPermissionGroups, userRegions } from '../src/utils/userDirectory.js'
+import { AREA_ROLE_FAMILY, regionalRoleOptions } from '../src/utils/roles.js'
 
-const roles = [{ value: 'supervisor_manager', label: '督导组管理人员' }, { value: 'station_manager', label: '站点账号' }, { value: 'area_account', label: '片区账号' }]
+const roles = [{ value: 'supervisor_manager', label: '督导组管理人员' }, { value: 'station_manager', label: '站点账号' }, { value: 'area_account', label: '片区经理' }]
 const catalog = [
   { key: 'view_expert_qa', category: '专家问答', name: '查看页面', description: '全局业务资料' },
   { key: 'view_operations_overview', category: '运营驾驶舱', name: '查看页面', description: '授权数据范围' },
@@ -27,13 +28,22 @@ test('directory supports ID, identity, phone, role, station and effective region
   assert.deepEqual(userRegions(accounts[2]), ['浦东管理片区'])
 })
 
+test('regional roles share one parent filter while child filters stay exact', () => {
+  const extendedRoles = [...roles, { value: 'area_safety', label: '安全专员' }]
+  assert.deepEqual(regionalRoleOptions(extendedRoles).map(role => role.value),
+    ['supervisor_manager', 'station_manager', AREA_ROLE_FAMILY])
+  const users = [...accounts, { id: 8, role: 'area_safety' }]
+  assert.deepEqual(filterDirectoryUsers(users, { role: AREA_ROLE_FAMILY }, extendedRoles).map(user => user.id), [3, 8])
+  assert.deepEqual(filterDirectoryUsers(users, { role: 'area_safety' }, extendedRoles).map(user => user.id), [8])
+})
+
 test('role, region and configuration filters intersect without inferring unrestricted scope', () => {
   assert.deepEqual(filterDirectoryUsers(accounts, { region: '浦东管理片区', role: 'station_manager', configuration: 'template' }, roles).map(user => user.id), [4])
   assert.deepEqual(filterDirectoryUsers(accounts, { region: '浦东管理片区', role: 'supervisor_manager' }, roles), [])
   assert.deepEqual(filterDirectoryUsers(accounts, { configuration: 'builtin' }, roles).map(user => user.id), [1])
   assert.deepEqual(filterDirectoryUsers(accounts, { configuration: 'custom' }, roles).map(user => user.id), [35335])
   assert.equal(permissionConfiguration(accounts[0]), 'builtin')
-  assert.equal(roleLabelFor(roles, 'area_account'), '片区账号')
+  assert.equal(roleLabelFor(roles, 'area_account'), '片区账号 / 片区经理')
 })
 
 test('sorts are deterministic and never mutate the source or default server role order', () => {

@@ -13,7 +13,7 @@
 
     <div class="directory-filters">
       <label class="directory-search"><span>搜索用户</span><input v-model.trim="filters.keyword" type="search" placeholder="ID、用户名、姓名、手机号、站点或片区" /></label>
-      <label><span>角色</span><select v-model="filters.role"><option value="">全部角色</option><option v-for="role in roles" :key="role.value" :value="role.value">{{ role.label }}</option></select></label>
+      <RegionalRoleSelect v-model="filters.role" :roles="roles" placeholder="全部角色" allow-area-group />
       <label><span>所属片区</span><select v-model="filters.region"><option value="">全部片区</option><option v-for="region in regions" :key="region" :value="region">{{ region }}</option></select></label>
       <label><span>权限配置</span><select v-model="filters.configuration"><option value="">全部配置</option><option value="template">角色模板</option><option value="custom">个性化配置</option><option value="builtin">内置管理员</option></select></label>
     </div>
@@ -60,6 +60,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import UserAccountActions from './UserAccountActions.vue'
+import RegionalRoleSelect from './RegionalRoleSelect.vue'
 import { isSupervisorRole } from '../utils/roles.js'
 import { directoryPageNumbers, filterDirectoryUsers, permissionConfiguration, permissionSummary, roleLabelFor, userInitial, userRegions } from '../utils/userDirectory.js'
 const props = defineProps({ users: { type: Array, default: () => [] }, roles: { type: Array, default: () => [] }, catalog: { type: Array, default: () => [] }, loading: Boolean, editingId: Number, deletingId: Number, resetting: Boolean })

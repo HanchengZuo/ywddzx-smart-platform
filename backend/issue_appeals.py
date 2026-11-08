@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from flask import g, jsonify, request
 from quality_deadlines import initialize_appeal_review, capture_quality_handoff, responsible_users
 from web_push_business import notify_appeal
-from area_roles import AREA_ROLES, is_area_specialist
+from area_roles import AREA_ROLES, is_area_appeal_reviewer, is_area_specialist
 
 ACTIVE = ('area_pending', 'quality_pending')
 APPEAL_LABELS = {
@@ -30,9 +30,21 @@ def area_regions(core, cur, user):
     ) or set()
 
 
+def can_review_area(core, cur, user, region, inspection_table_id=None):
+    role = user.get('role')
+    return (
+        is_area_appeal_reviewer(role)
+        and core.normalize_station_region_value(region) in area_regions(core, cur, user)
+        and (role == 'area_account' or (
+            inspection_table_id is not None and core.is_inspection_table_allowed_for_user(
+                cur, user, inspection_table_id, 'limit_issue_inspection_table_scope')
+        ))
+    )
+
+
 def can_decide(core, cur, user, appeal):
     if appeal['status'] == 'area_pending':
-        return user.get('role') == 'area_account' and core.normalize_station_region_value(appeal['region']) in area_regions(core, cur, user)
+        return can_review_area(core, cur, user, appeal['region'], appeal.get('inspection_table_id'))
     return (appeal['status'] == 'quality_pending' and user.get('role') == 'quality_safety'
             and core.has_permission(cur, user, 'review_quality_appeals'))
 
@@ -189,7 +201,7 @@ def register_issue_appeals(app, namespace):
               (SELECT COALESCE(real_name,username) FROM users WHERE id=a.submitted_by) AS submitted_name,
               (SELECT COALESCE(real_name,username) FROM users WHERE id=a.area_by) AS area_name,
               (SELECT COALESCE(real_name,username) FROM users WHERE id=a.quality_by) AS quality_name,
-              s.station_name, s.region, t.table_name,
+              s.station_name, s.region, t.table_name, i.inspection_table_id,
               to_char(i.created_at,'YYYY-MM-DD HH24:MI') AS inspection_time
               {joins} WHERE {predicate} ORDER BY a.id DESC LIMIT %s OFFSET %s""", [user['id']] + params + [size, (page-1)*size])
             rows = cur.fetchall()
@@ -281,7 +293,7 @@ def register_issue_appeals(app, namespace):
             cur.execute("SELECT set_config('app.appeal_event','',true)")
             cur.execute('SELECT region FROM stations WHERE id=%s',(issue['station_id'],))
             region=cur.fetchone()['region']
-            owners=responsible_users(cur,core,'area_pending',issue['station_id'],region)
+            owners=responsible_users(cur,core,'area_pending',issue['station_id'],region,issue['inspection_table_id'])
             notify_appeal(cur,appeal_id,'area_pending',[owner['id'] for owner in owners])
             return jsonify(success=True, id=appeal_id, message='问题已进入申诉空间，等待所属片区审核反馈。')
         return run(operation)
@@ -303,7 +315,7 @@ def register_issue_appeals(app, namespace):
             issue = cur.fetchone()
             if not issue:
                 return jsonify(error='问题不存在或已被删除。'), 404
-            cur.execute('SELECT a.*, s.region FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE a.id=%s FOR UPDATE OF a', (appeal_id,))
+            cur.execute('SELECT a.*, s.region, i.inspection_table_id FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE a.id=%s FOR UPDATE OF a', (appeal_id,))
             appeal = cur.fetchone()
             if not appeal:
                 return jsonify(error='申诉不存在或已被删除。'), 404

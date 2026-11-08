@@ -8,6 +8,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from flask import g, jsonify, request
 from psycopg2.extras import Json
+from area_roles import AREA_APPEAL_REVIEW_ROLES
 
 
 def scan_interval_seconds():
@@ -23,17 +24,18 @@ def policy_snapshot(cur):
     return json.loads(json.dumps(dict(cur.fetchone()), default=lambda value: value.isoformat()))
 
 
-def responsible_users(cur, core, stage, station_id, region):
-    role = {'acceptance': 'station_manager', 'area_pending': 'area_account', 'quality_pending': 'quality_safety'}[stage]
-    cur.execute("SELECT id,username,real_name,role,station_id FROM users WHERE role=%s AND account_status='active' ORDER BY id", (role,))
+def responsible_users(cur, core, stage, station_id, region, inspection_table_id=None):
+    roles = {'acceptance': ('station_manager',), 'area_pending': AREA_APPEAL_REVIEW_ROLES,
+             'quality_pending': ('quality_safety',)}[stage]
+    cur.execute("SELECT id,username,real_name,role,station_id FROM users WHERE role=ANY(%s) AND account_status='active' ORDER BY id", (list(roles),))
     users = cur.fetchall()
     selected = []
     for user in users:
         if stage == 'acceptance':
             allowed = user['station_id'] == station_id and core.can_sign_inspection_records(cur, user)
         elif stage == 'area_pending':
-            from issue_appeals import area_regions
-            allowed = core.normalize_station_region_value(region) in area_regions(core, cur, user)
+            from issue_appeals import can_review_area
+            allowed = can_review_area(core, cur, user, region, inspection_table_id)
         else:
             allowed = core.has_permission(cur, user, 'review_quality_appeals')
         if allowed:
@@ -51,7 +53,7 @@ def log_event(cur, kind, detail, *, inspection_id=None, issue_id=None, appeal_id
 
 
 def initialize_appeal_review(cur, core, appeal_id, user=None):
-    cur.execute('''SELECT a.*,i.station_id,i.inspection_id,s.region FROM inspection_issue_appeals a
+    cur.execute('''SELECT a.*,i.station_id,i.inspection_id,i.inspection_table_id,s.region FROM inspection_issue_appeals a
       JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE a.id=%s''', (appeal_id,))
     appeal = cur.fetchone()
     policy = policy_snapshot(cur)
@@ -75,7 +77,7 @@ def initialize_appeal_review(cur, core, appeal_id, user=None):
       review_policy=%s,review_started_at=%s,review_phase=%s WHERE id=%s RETURNING review_deadline_at''',
       (started_at, policy[f'{phase}_hours'], Json(policy), started_at, phase, appeal_id))
     deadline = cur.fetchone()['review_deadline_at']
-    owners = responsible_users(cur, core, appeal['status'], appeal['station_id'], appeal['region'])
+    owners = responsible_users(cur, core, appeal['status'], appeal['station_id'], appeal['region'], appeal['inspection_table_id'])
     cur.execute('UPDATE inspection_issue_appeals SET phase_responsible=phase_responsible || %s::jsonb WHERE id=%s',
                 (Json({appeal['status']: owners}), appeal_id))
     log_event(cur, 'review_started', ('片区初审' if phase == 'area_review' else '质安部终审') + '独立工作小时时限开始；非工作日暂停。',
@@ -176,7 +178,7 @@ def run_deadline_scan(cur, core, *, scheduled=False):
             continue
         approved = action == 'approve'
         stage = appeal['status']
-        owners = responsible_users(cur, core, stage, issue['station_id'], issue['region'])
+        owners = responsible_users(cur, core, stage, issue['station_id'], issue['region'], issue['inspection_table_id'])
         stage_name = '片区初审' if stage == 'area_pending' else '质安部终审'
         result = '系统超时通过申诉' if approved else '系统超时拒绝申诉'
         handoff = approved and stage == 'area_pending'

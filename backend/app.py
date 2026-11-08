@@ -703,7 +703,7 @@ from issue_flow_presentation import present_flow_rows, flow_event_presentation
 from quality_deadlines import register_quality_deadlines
 
 from area_roles import (AREA_ROLE_LABELS, AREA_ROLES, AREA_SPECIALIST_DEPARTMENTS,
-                        is_area_specialist, require_specialist_region, restrict_specialist_permissions,
+                        is_area_appeal_reviewer, is_area_specialist, require_specialist_region, restrict_specialist_permissions,
                         specialist_api_allowed, specialist_can_read_media)
 
 ROLE_OPTIONS = {
@@ -1139,7 +1139,7 @@ PERMISSION_CATALOG = [
         "key": "review_quality_appeals",
         "name": "质安部申诉终审",
         "category": "申诉空间",
-        "description": "仅质安部角色可使用；审核片区通过的申诉。通过后问题已销毁，拒绝后恢复整改。片区账号默认仅审核所管站点的初审，无需此权限。",
+        "description": "仅质安部角色可使用；审核片区通过的申诉。片区经理和安全专员初审本片区申诉，无需此权限。",
         "defaults": {"root": True, "quality_safety": False},
     },
     {
@@ -2796,7 +2796,13 @@ def require_signed_api_token():
             ),
             403,
         )
-    if is_area_specialist(user.get("role")) and not specialist_api_allowed(request.endpoint, request.path, request.method):
+    area_appeal_decision = (
+        request.endpoint == "decide_issue_appeal" and request.method == "POST"
+        and is_area_appeal_reviewer(user.get("role"))
+    )
+    if is_area_specialist(user.get("role")) and not (
+        area_appeal_decision or specialist_api_allowed(request.endpoint, request.path, request.method)
+    ):
         return jsonify(success=False, error="当前片区专员账号无权访问此功能。"), 403
     current_user_id = normalize_identity_for_compare(user["id"])
     for key, value in iter_request_identity_values():
@@ -18281,7 +18287,11 @@ def list_impersonation_accounts():
                 u.station_id,
                 u.account_status,
                 s.station_name,
-                s.region
+                COALESCE(s.region, CASE WHEN u.role = ANY(%s) THEN (
+                    SELECT STRING_AGG(r.station_region, '、' ORDER BY r.station_region)
+                    FROM user_station_region_scopes r
+                    WHERE r.user_id = u.id AND r.scope_key = 'limit_issue_station_region_scope'
+                ) END) AS region
             FROM users u
             LEFT JOIN stations s ON s.id = u.station_id
             WHERE u.role <> 'root'
@@ -18303,7 +18313,7 @@ def list_impersonation_accounts():
                 COALESCE(u.real_name, ''),
                 u.username,
                 u.id;
-            """
+            """, (list(AREA_ROLES),)
         )
         accounts = [serialize_impersonation_account(dict(row)) for row in cur.fetchall()]
         grouped = []
@@ -19617,7 +19627,9 @@ def filter_security_accounts(accounts, filters):
             for key in ("username", "real_name", "station_name", "station_region")
         ):
             continue
-        if role and account.get("role") != role:
+        if role == "area_family" and account.get("role") not in AREA_ROLES:
+            continue
+        if role and role != "area_family" and account.get("role") != role:
             continue
         if risk_level:
             if risk_level == "high_risk":

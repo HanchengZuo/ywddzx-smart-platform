@@ -7,7 +7,7 @@ from web_push_outbox import enqueue_business
 SOURCES = (
     dict(key='daily_schedule',menu='巡检排班 / 今日安排',name='今日巡检安排',recipient='被分配的督导组管理人员与督导组组员本人',
          trigger='人员分工确认或站点派工发生变化；未来安排在当日提醒',rule='按账号和当日实际安排合并，相同方案不重复通知。'),
-    dict(key='appeal_area',menu='申诉空间',name='待片区处理申诉',recipient='站点所属片区的有效片区账号',
+    dict(key='appeal_area',menu='申诉空间',name='待片区处理申诉',recipient='站点所属片区有权初审的片区经理和安全专员',
          trigger='站点成功提交申诉',rule='按现有片区归属匹配，不扩大数据权限。'),
     dict(key='appeal_quality',menu='申诉空间',name='待质安部处理申诉',recipient='拥有申诉终审权限的有效质安部账号',
          trigger='片区通过并转入质安部（含时限规则自动通过）',rule='只通知具备终审权限的账号。'),
@@ -35,12 +35,13 @@ def notify_quality_review(cur, issue, event_id, recipients):
 
 def recipient_resolver(*, can_sign, has_permission, normalize_region, region_scope, quality_table_ids=None):
     policy=SimpleNamespace(can_sign_inspection_records=can_sign,has_permission=has_permission,
-        normalize_station_region_value=normalize_region,get_effective_station_region_scope_values=region_scope)
-    def resolve(cur, stage, scope_id, region):
+        normalize_station_region_value=normalize_region,get_effective_station_region_scope_values=region_scope,
+        is_inspection_table_allowed_for_user=lambda cur, user, table_id, key: bool(quality_table_ids and table_id in quality_table_ids(cur)))
+    def resolve(cur, stage, scope_id, region, inspection_table_id=None):
         if stage == 'quality_review':
             return quality_review_recipients(cur, has_permission) if quality_table_ids and scope_id in quality_table_ids(cur) else []
         from quality_deadlines import responsible_users
-        return [user['id'] for user in responsible_users(cur,policy,stage,scope_id,region)]
+        return [user['id'] for user in responsible_users(cur,policy,stage,scope_id,region,inspection_table_id)]
     return resolve
 
 
@@ -138,8 +139,9 @@ def delivery_allowed(cur, message, user_id, recipients):
         return bool(record and record['ready'] and user_id in recipients(cur,'acceptance',record['station_id'],record['region']))
     if message['source'] in ('appeal_area','appeal_quality'):
         stage='area_pending' if message['source']=='appeal_area' else 'quality_pending'
-        cur.execute('''SELECT a.status,i.station_id,s.region FROM inspection_issue_appeals a
+        cur.execute('''SELECT a.status,i.station_id,s.region,i.inspection_table_id FROM inspection_issue_appeals a
           JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE a.id=%s''',(message['entity_id'],))
         record=cur.fetchone()
-        return bool(record and record['status']==stage and user_id in recipients(cur,stage,record['station_id'],record['region']))
+        return bool(record and record['status']==stage and user_id in recipients(
+            cur,stage,record['station_id'],record['region'],record['inspection_table_id']))
     return False

@@ -10,3 +10,17 @@ export const AREA_ROLE_LABELS = Object.freeze({
 })
 export const isAreaRole = role => Object.hasOwn(AREA_ROLE_LABELS, role)
 export const isAreaSpecialist = role => Object.hasOwn(AREA_SPECIALIST_DEPARTMENT_LABELS, role)
+export const AREA_ROLE_FAMILY = 'area_family'
+export const matchesRoleFilter = (role, filter) => !filter || (filter === AREA_ROLE_FAMILY ? isAreaRole(role) : filter === role)
+export const rolePathLabel = (role, label) => isAreaRole(role) ? `片区账号 / ${label || AREA_ROLE_LABELS[role]}` : label
+
+export function regionalRoleOptions(roles) {
+  const options = []
+  for (const role of roles) {
+    if (!isAreaRole(role.value)) options.push(role)
+    else if (!options.some(option => option.value === AREA_ROLE_FAMILY)) {
+      options.push({ value: AREA_ROLE_FAMILY, label: '片区账号' })
+    }
+  }
+  return options
+}

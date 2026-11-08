@@ -71,10 +71,7 @@
         </div>
 
         <div class="filter-grid">
-          <label>
-            <span>角色</span>
-            <select v-model="filters.role"><option value="">全部角色</option><option v-for="item in options.roles" :key="item.value" :value="item.value">{{ item.label }}</option></select>
-          </label>
+          <RegionalRoleSelect v-model="filters.role" :roles="options.roles" placeholder="全部角色" allow-area-group />
           <label>
             <span>所属片区</span>
             <select v-model="filters.station_region" @change="handleRegionChange"><option value="">全部片区</option><option v-for="region in regionOptions" :key="region" :value="region">{{ region }}</option></select>
@@ -134,7 +131,7 @@
           </div>
           <article v-for="account in accounts" :key="account.id" class="account-table account-row">
             <div data-label="账号"><strong>{{ account.username }}</strong><small>{{ account.real_name || '-' }}</small></div>
-            <div data-label="角色"><span class="role-chip">{{ account.role_label }}</span></div>
+            <div data-label="角色"><span class="role-chip">{{ rolePathLabel(account.role, account.role_label) }}</span></div>
             <div data-label="所属站点"><strong>{{ account.station_name || '-' }}</strong><small>{{ account.station_region || '未关联站点' }}</small></div>
             <div data-label="风险"><span :class="['risk-chip', account.risk_level]">{{ account.risk_label }}</span><small class="risk-reason">{{ account.risk_reasons.join('；') }}</small></div>
             <div data-label="登录方式"><span :class="['login-method-chip', { passkey: account.passkey_bound }]">{{ account.login_method_label }}</span><small v-if="account.passkey_count">{{ account.passkey_count }} 个凭据</small></div>
@@ -237,6 +234,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
+import RegionalRoleSelect from '@/components/RegionalRoleSelect.vue'
+import { AREA_ROLE_FAMILY, rolePathLabel } from '@/utils/roles'
 
 const rootAuthenticatorLabels = {
   root_authenticator_setup: '创建Authenticator绑定流程',
@@ -304,7 +303,9 @@ const appliedFilterChips = computed(() => {
   const risk = options.risk_levels.find((item) => item.value === appliedFilters.risk_level)
   const chips = []
   if (appliedFilters.keyword) chips.push({ key: 'keyword', label: '搜索', value: appliedFilters.keyword })
-  if (role) chips.push({ key: 'role', label: '角色', value: role.label })
+  if (role || appliedFilters.role === AREA_ROLE_FAMILY) chips.push({
+    key: 'role', label: '角色', value: role ? rolePathLabel(role.value, role.label) : '片区账号'
+  })
   if (appliedFilters.station_region) chips.push({ key: 'station_region', label: '片区', value: appliedFilters.station_region })
   if (station) chips.push({ key: 'station_id', label: '站点', value: station.station_name })
   if (appliedFilters.risk_level) chips.push({

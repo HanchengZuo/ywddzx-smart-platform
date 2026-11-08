@@ -35,7 +35,15 @@
         <button type="button" :class="{ active: selectedRole === '' }" @click="selectedRole = ''">
           全部 <span>{{ total }}</span>
         </button>
-        <button v-for="group in groups" :key="group.role" type="button"
+        <button v-for="option in roleOptions" :key="option.value" type="button"
+          :aria-expanded="option.value === AREA_ROLE_FAMILY ? areaSelected : undefined"
+          :class="{ active: option.value === AREA_ROLE_FAMILY ? areaSelected : selectedRole === option.value }" @click="selectedRole = option.value">
+          {{ option.label }} <span>{{ roleCounts[option.value] }}</span>
+        </button>
+      </nav>
+      <nav v-if="areaSelected" class="account-switcher-roles area-role-children" aria-label="片区子角色">
+        <button type="button" :class="{ active: selectedRole === AREA_ROLE_FAMILY }" @click="selectedRole = AREA_ROLE_FAMILY">全部片区账号</button>
+        <button v-for="group in areaGroups" :key="group.role" type="button"
           :class="{ active: selectedRole === group.role }" @click="selectedRole = group.role">
           {{ group.role_label }} <span>{{ group.count }}</span>
         </button>
@@ -52,7 +60,7 @@
           <header>
             <div>
               <span class="account-role-mark">{{ roleMark(group.role_label) }}</span>
-              <strong>{{ group.role_label }}</strong>
+              <strong>{{ rolePathLabel(group.role, group.role_label) }}</strong>
             </div>
             <em>{{ group.accounts.length }} 个账号</em>
           </header>
@@ -85,6 +93,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import axios from 'axios'
+import { AREA_ROLE_FAMILY, isAreaRole, matchesRoleFilter, regionalRoleOptions, rolePathLabel } from '../utils/roles.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -104,10 +113,17 @@ const selectedRole = ref('')
 const groups = ref([])
 const total = ref(0)
 const busy = computed(() => Boolean(switchingId.value) || returning.value)
+const areaGroups = computed(() => groups.value.filter(group => isAreaRole(group.role)))
+const areaSelected = computed(() => isAreaRole(selectedRole.value) || selectedRole.value === AREA_ROLE_FAMILY)
+const roleOptions = computed(() => regionalRoleOptions(groups.value.map(group => ({ value: group.role, label: group.role_label }))))
+const roleCounts = computed(() => ({
+  ...Object.fromEntries(groups.value.map(group => [group.role, group.count])),
+  [AREA_ROLE_FAMILY]: areaGroups.value.reduce((sum, group) => sum + group.count, 0),
+}))
 
 const normalizedKeyword = computed(() => keyword.value.toLocaleLowerCase('zh-CN'))
 const filteredGroups = computed(() => groups.value
-  .filter((group) => !selectedRole.value || group.role === selectedRole.value)
+  .filter((group) => matchesRoleFilter(group.role, selectedRole.value))
   .map((group) => ({
     ...group,
     accounts: group.accounts.filter((account) => {
@@ -117,7 +133,7 @@ const filteredGroups = computed(() => groups.value
         account.username,
         account.station_name,
         account.region,
-        account.role_label
+        rolePathLabel(account.role, account.role_label)
       ].some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(normalizedKeyword.value))
     })
   }))
@@ -383,6 +399,11 @@ watch(() => props.visible, (visible) => {
   border-color: #0e7490;
   background: #0e7490;
   color: #fff;
+}
+.area-role-children {
+  margin-inline-start: 10px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid #8db8d3;
 }
 
 .account-switcher-roles button.active span {

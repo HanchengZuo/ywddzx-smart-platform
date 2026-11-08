@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 from tests import test_web_push as fixtures
-from web_push_business import notify_appeal, process_signature_changes, recipient_resolver
+from web_push_business import delivery_allowed, notify_appeal, process_signature_changes, recipient_resolver
 from web_push_worker import deliver_one
 from tests import test_issue_appeals as appeal_fixtures
 
@@ -143,6 +143,28 @@ class BusinessPushTests(unittest.TestCase):
             notify_appeal(cur,1,'quality_pending',self.resolve(cur,'quality_pending',1,'浦东'))
         self.assertEqual(self.rows("SELECT r.user_id FROM web_push_recipients r JOIN web_push_messages m ON m.id=r.message_id WHERE m.source='appeal_quality'"),[dict(user_id=7)])
         self.assertEqual(self.call('/api/management/notifications?log_source=appeal_quality').json['records_total'],1)
+
+    def test_safety_specialist_receives_only_scoped_first_review_notifications(self):
+        self.execute("""INSERT INTO users VALUES
+            (10,'safety','本片区安全专员','area_safety','active',NULL),
+            (11,'other_safety','外片区安全专员','area_safety','active',NULL),
+            (12,'non_oil','本片区非油专员','area_non_oil','active',NULL);
+            INSERT INTO inspection_issue_appeals VALUES(1,1,'area_pending');""")
+        resolve = recipient_resolver(can_sign=lambda *_: False, has_permission=lambda *_: False,
+            normalize_region=lambda region: region,
+            region_scope=lambda cur, user, *args: {'浦东'} if user['id'] in (5,9,10,12) else {'松金'},
+            quality_table_ids=lambda _: {1})
+        message = dict(source='appeal_area', entity_id=1)
+        with self.connect() as conn, conn.cursor() as cur:
+            ids = resolve(cur, 'area_pending', 1, '浦东', 1)
+            self.assertEqual(ids, [5,9,10])
+            notify_appeal(cur, 1, 'area_pending', ids)
+            self.assertTrue(delivery_allowed(cur, message, 10, resolve))
+            self.assertFalse(delivery_allowed(cur, message, 11, resolve))
+            self.assertFalse(delivery_allowed(cur, message, 12, resolve))
+            cur.execute("UPDATE issues SET inspection_table_id=2 WHERE id=1")
+            self.assertFalse(delivery_allowed(cur, message, 10, resolve))
+        self.assertEqual([row['user_id'] for row in self.rows('SELECT user_id FROM web_push_recipients ORDER BY user_id')], [5,9,10])
 
     def test_fanout_optout_and_stale_business_deliveries_are_logged_without_network(self):
         self.register(2);self.register(2,key=fixtures.b64(bytes(reversed(range(32)))),suffix='second')

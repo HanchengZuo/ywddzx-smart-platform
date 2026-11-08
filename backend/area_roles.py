@@ -12,6 +12,7 @@ AREA_ROLE_LABELS = {
     "area_safety": "安全专员",
 }
 AREA_ROLES = tuple(AREA_ROLE_LABELS)
+AREA_APPEAL_REVIEW_ROLES = ("area_account", "area_safety")
 SPECIALIST_FIXED_ENABLED = frozenset({
     "limit_issue_station_region_scope", "limit_record_station_region_scope",
     "limit_issue_inspection_table_scope", "limit_record_inspection_table_scope",
@@ -39,6 +40,10 @@ def specialist_api_allowed(endpoint, path, method):
     if endpoint in SPECIALIST_EXPORT_ENDPOINTS or endpoint == "mark_appeal_read":
         return True
     return method in {"GET", "HEAD"} and endpoint in SPECIALIST_READ_ENDPOINTS
+
+
+def is_area_appeal_reviewer(role):
+    return role in AREA_APPEAL_REVIEW_ROLES
 
 
 def is_area_specialist(role):

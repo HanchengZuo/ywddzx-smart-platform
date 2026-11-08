@@ -60,13 +60,8 @@
               <input v-model.trim="form.username" type="text" maxlength="80" autofocus placeholder="例如：supervisor1" />
             </label>
 
-            <label class="form-field">
-              <span>角色</span>
-              <select v-model="form.role" :disabled="isEditingRoot" @change="applyRoleDefaults">
-                <option v-for="role in editableRoles" :key="role.value" :value="role.value">{{ role.label }}</option>
-              </select>
-              <small v-if="isEditingRoot" class="field-tip">root 是系统内置管理员，角色固定不可调整。</small>
-            </label>
+            <RegionalRoleSelect v-model="form.role" :key="form.id || 'new'" :roles="editableRoles"
+              :disabled="isEditingRoot" @change="applyRoleDefaults" />
 
             <label class="form-field">
               <span>姓名</span>
@@ -148,7 +143,7 @@
             <div class="permission-panel-head">
               <div>
                 <strong>页面权限开关</strong>
-                <p v-if="isAreaSpecialist(form.role)">固定范围：{{ areaAccountRegion || '未绑定片区' }} · {{ AREA_SPECIALIST_DEPARTMENT_LABELS[form.role] }}检查表。只能调整驾驶舱的查看开关；所属片区在账号资料中修改。</p>
+                <p v-if="isAreaSpecialist(form.role)">固定范围：{{ areaAccountRegion || '未绑定片区' }} · {{ AREA_SPECIALIST_DEPARTMENT_LABELS[form.role] }}检查表。<template v-if="form.role === 'area_safety'">可初审本片区申诉，不含终审。 </template>只能调整驾驶舱的查看开关；所属片区在账号资料中修改。</p>
                 <p v-else>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '未单独设置的权限随角色通用权限变化；单独开启或关闭优先于角色设置，仍受依赖规则约束。' }}</p>
               </div>
               <span class="permission-overview">{{ roleLabel(form.role) }} · {{ enabledPermissionCount }} / {{ permissions.length }} 项已开启</span>
@@ -426,15 +421,11 @@
         </div>
 
         <div class="role-template-toolbar">
-          <label class="form-field">
-            <span>选择角色</span>
-            <select v-model="rolePermissionDialog.role" @change="loadRoleTemplatePermissions">
-              <option v-for="role in roleTemplateRoles" :key="role.value" :value="role.value">{{ role.label }}</option>
-            </select>
-          </label>
+          <RegionalRoleSelect v-model="rolePermissionDialog.role" :roles="roleTemplateRoles"
+            label="选择角色" @change="loadRoleTemplatePermissions" />
           <div class="role-template-note">
             <strong>{{ roleLabel(rolePermissionDialog.role) }}</strong>
-            <span v-if="isAreaSpecialist(rolePermissionDialog.role)">专员的只读数据范围固定为账号绑定片区与{{ AREA_SPECIALIST_DEPARTMENT_LABELS[rolePermissionDialog.role] }}检查表的交集。</span>
+            <span v-if="isAreaSpecialist(rolePermissionDialog.role)">专员的数据范围固定为账号绑定片区与{{ AREA_SPECIALIST_DEPARTMENT_LABELS[rolePermissionDialog.role] }}检查表的交集。<template v-if="rolePermissionDialog.role === 'area_safety'">可初审本片区申诉，不含终审。</template></span>
             <span v-else>这里统一配置页面权限、检查表范围和片区范围；单个用户若另有个性化配置，会优先生效。</span>
           </div>
         </div>
@@ -596,7 +587,7 @@
             恢复系统默认
           </button>
           <button class="btn btn-secondary" type="button" @click="closeRolePermissionDialog">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving" @click="saveRolePermissions">
+          <button class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving || !rolePermissionDialog.role" @click="saveRolePermissions">
             {{ rolePermissionDialog.saving ? '保存中...' : '保存角色模板' }}
           </button>
         </div>
@@ -617,6 +608,7 @@ import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
 import UserPermissionToggle from '@/components/UserPermissionToggle.vue'
 import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
 import { AREA_SPECIALIST_DEPARTMENT_LABELS, isAreaRole, isAreaSpecialist, isSupervisorRole } from '@/utils/roles'
+import RegionalRoleSelect from '@/components/RegionalRoleSelect.vue'
 import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions } from '@/utils/userDirectory'
 
 const currentUserId = localStorage.getItem('user_id') || ''
@@ -1295,6 +1287,7 @@ const resetRoleTemplateToSystemDefaults = () => {
 }
 
 const validateRoleTemplate = () => {
+  if (!rolePermissionDialog.role) return '请选择具体角色。'
   if (
     !isAreaSpecialist(rolePermissionDialog.role) && inspectionTables.value.length > 0 &&
     inspectionTableScopePermissionKeys.some((key) => (

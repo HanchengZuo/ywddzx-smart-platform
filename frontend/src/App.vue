@@ -663,7 +663,7 @@ import { schedulingMenuPages } from './config/schedulingCatalog'
 import { certificatePages, canAccessCertificates } from './config/certificateCatalog'
 import { reportPerspective } from './utils/reportAccess'
 import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
-import { AREA_ROLE_LABELS, isAreaRole, isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
+import { isAreaRole, isSupervisorRole, rolePathLabel, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import { canAccessIssueQueue, issueQueuePaths } from './utils/issueQueueAccess.js'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
@@ -1052,7 +1052,7 @@ const currentRoleLabel = computed(() => {
   if (authState.role === 'oil_gas') return '油气事业部账号'
   if (authState.role === 'non_oil') return '非油事业部账号'
   if (authState.role === 'finance') return '财务部账号'
-  if (isAreaRole(authState.role)) return AREA_ROLE_LABELS[authState.role]
+  if (isAreaRole(authState.role)) return rolePathLabel(authState.role)
   return '站点账号'
 })
 const sidebarTitle = computed(() => {

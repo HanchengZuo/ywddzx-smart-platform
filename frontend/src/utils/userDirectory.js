@@ -1,4 +1,5 @@
 import { sortPermissionGroups } from './permissionPanel.js'
+import { matchesRoleFilter, rolePathLabel } from './roles.js'
 
 export const personalScopeDraft = (effective, overrides) => ({
   ...(effective || {}),
@@ -28,7 +29,7 @@ export function previewPersonalPermissions(base, overrides, exclusiveGroups, nor
 
 export const permissionConfiguration = (user) => user.role === 'root' ? 'builtin' : user.has_permission_overrides ? 'custom' : 'template'
 export const permissionConfigurationLabel = (user) => ({ builtin: '内置管理员', custom: '个性化配置', template: '角色模板' })[permissionConfiguration(user)]
-export const roleLabelFor = (roles, role) => roles.find(item => item.value === role)?.label || role || '未设置角色'
+export const roleLabelFor = (roles, role) => rolePathLabel(role, roles.find(item => item.value === role)?.label) || role || '未设置角色'
 export const userInitial = (user) => String(user.real_name || user.username || '?').trim().slice(0, 1).toUpperCase()
 
 export function userRegions(user) {
@@ -48,7 +49,7 @@ const normalize = (value) => String(value ?? '').toLocaleLowerCase().replace(/\s
 export function filterDirectoryUsers(users, filters, roles) {
   const query = normalize(filters.keyword)
   const filtered = users.filter(user => (
-    (!filters.role || user.role === filters.role) &&
+    matchesRoleFilter(user.role, filters.role) &&
     (!filters.region || userRegions(user).includes(filters.region)) &&
     (!filters.configuration || permissionConfiguration(user) === filters.configuration) &&
     (!query || [user.id, user.username, user.real_name, user.phone, user.station_name, roleLabelFor(roles, user.role), ...userRegions(user)]
