@@ -277,6 +277,8 @@ iOS/iPadOS 16.4及以上须先在Safari分享菜单“添加到主屏幕”，�
 
 运行账号需要项目目录、Docker及 `/var/www/ywddzx` 的操作权限。服务器须配置 `APP_SECRET_KEY`、`DB_PASSWORD`、`WEBAUTHN_RP_ID`、`WEBAUTHN_ORIGIN` 和 `CORS_ALLOWED_ORIGINS`，且 Nginx 已加载 `deploy/nginx/ywddzx-cache.conf` 与 `ywddzx-security.conf`。配置或构建失败时不会替换前端文件；后续步骤失败会停止并说明阶段，不自动回滚已完成的部署。此脚本会实际更新生产服务并执行迁移，请仅在准备部署时运行。
 
+通知摘要的入口保护配置为 `deploy/nginx/ywddzx-notification-limit.conf`，生产安装到 `/etc/nginx/conf.d/` 后先执行 `nginx -t`，通过后再重载。只对主站的通知摘要限频，超量返回 429，不限制其他业务接口，也不强制刷新旧标签页。
+
 已经应用到数据库的迁移版本不能随未提交的功能代码一起删除，否则后端会在迁移阶段退出并循环重启，前端可能只显示Passkey暂不可用。`20261024_001` 是已撤销HTML原型的兼容节点：不新建、删除或使用原型表，只保留可解析的版本链；已有该版本的本地备份可以正常升级，未运行过原型的数据库也不需要创建其表。不得通过删除Passkey或随意修改数据库版本号来绕过启动错误。
 
 大模型 Key 必须进入后端容器，仅在 SSH 交互终端里 `export` 不代表 Docker 已收到。部署会保留当前部署环境及项目 `.env` 的四个厂家 Key，对缺失项依次读取专用配置文件 `AI_KEYS_ENV_FILE`（默认 `/etc/ywddzx/ai.env`）、`/etc/environment` 及部署账号的 Shell 配置（兼容旧 `.bashrc`、`.zshrc` 等）。只读取 `DEEPSEEK_API_KEY`、`ZHIPU_API_KEY`、`DASHSCOPE_API_KEY`、`MIMO_API_KEY` 的单行固定值赋值，不执行配置中的命令、变量展开或 Shell 启动逻辑；专用文件应由部署账号保管并设为 `0600`，不要提交 Git。未配置的厂家保持可选，不影响其他厂家。部署日志仅显示是否配置及配置来源，不显示值；密钥只在重建后端的 Compose 子进程中补入，不额外传给前端构建。部署结束还会从后端实际环境核对四个厂家状态，页面的“Key 已配置”仍不代表余额、模型授权或网络可用。
