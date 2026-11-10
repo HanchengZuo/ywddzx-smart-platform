@@ -18,6 +18,7 @@ class CosBackupAdapterTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.stack.enter_context(patch.object(api, 'BACKUP_CONFIG_PATH', str(self.root / 'backup_config.json')))
         self.archive = self.root / 'test.zip'
         self.archive.write_bytes(b'temporary archive')
         self.size = self.archive.stat().st_size
@@ -260,6 +261,15 @@ class CosBackupAdapterTests(unittest.TestCase):
                 self.assertEqual(api.get_cos_backup_overview()[1], [])
         with patch.object(api, 'CosS3Client', None):
             self.assertEqual(api.get_cos_backup_overview()[0]['status'], 'error')
+        self.client_factory.assert_not_called()
+
+    def test_disabled_cos_skips_upload_and_listing_with_valid_credentials(self):
+        config = api.write_backup_config(dict(cos_enabled=False, last_cos_key='prior'))
+        with patch.object(api, 'run_bounded_upload') as worker:
+            self.assertEqual(self.upload()['status'], 'disabled')
+            worker.assert_not_called()
+        status, rows = api.get_cos_backup_overview(config)
+        self.assertEqual((status['status'], status['last_cos_key'], rows), ('disabled', 'prior', []))
         self.client_factory.assert_not_called()
 
     def prepare_http(self):

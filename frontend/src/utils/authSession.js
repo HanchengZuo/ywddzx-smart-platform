@@ -91,10 +91,15 @@ export const storeAuthSession = (user, token, expiresInSeconds = null) => {
     throw new Error('登录响应缺少服务端令牌。')
   }
 
+  const sameToken = getStoredAuthToken() === token
   localStorage.setItem('auth_token', token)
   const ttl = Number(expiresInSeconds)
   if (Number.isFinite(ttl) && ttl > 0) {
-    localStorage.setItem('auth_expires_at', String(Date.now() + ttl * 1000))
+    const expiresAt = Date.now() + ttl * 1000
+    // The same signed token has a fixed expiry; avoid broadcasting rounding jitter.
+    if (!sameToken || Math.abs(getStoredAuthExpiresAt() - expiresAt) > 2000) {
+      localStorage.setItem('auth_expires_at', String(expiresAt))
+    }
   } else {
     localStorage.removeItem('auth_expires_at')
   }
@@ -144,6 +149,7 @@ export const verifyAuthSession = async ({ force = false, preserveOnTransientErro
 
   authMeInFlight = axios.get('/api/auth/me')
     .then((response) => {
+      if (getStoredAuthToken() !== token) return { ok: true, superseded: true }
       const user = response.data?.user
       const refreshedToken = response.data?.token || token
       const expiresIn = Number(response.data?.expires_in || 0)

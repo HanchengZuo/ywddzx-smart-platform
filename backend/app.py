@@ -1750,6 +1750,8 @@ def prune_cos_backup_objects(objects=None):
 
 
 def upload_backup_archive_to_cos(local_path, object_filename):
+    if not read_backup_config()["cos_enabled"]:
+        return {"status": "disabled", "message": "COS 备份已关闭，未上传云端。"}
     config = get_cos_env_config()
     if not config["configured"]:
         return {"status": "not_configured", "message": "未配置 COS 环境变量，已跳过云端上传。"}
@@ -2073,20 +2075,12 @@ def restore_full_backup_archive(file_storage):
 def mark_auto_backup_result(success, result=None, error=""):
     config = read_backup_config()
     if success:
-        cos_result = (result or {}).get("cos") or {}
-        cos_status = cos_result.get("status") or "not_configured"
         config.update(
             {
                 "last_auto_export_at": beijing_now().isoformat(),
                 "last_backup_path": result.get("path") if result else None,
                 "last_backup_size": result.get("size") if result else None,
-                "last_cos_status": cos_status,
-                "last_cos_key": cos_result.get("key"),
-                "last_cos_uploaded_at": cos_result.get("uploaded_at"),
-                "last_cos_retained_count": cos_result.get("retained_count") or 0,
-                "last_cos_error": cos_result.get("message") if cos_status == "error" else "",
-                "last_status": "warning" if cos_status == "error" else "success",
-                "last_error": cos_result.get("message") if cos_status == "error" else "",
+                **backup_cos.backup_result_metadata((result or {}).get("cos") or {}),
             }
         )
     else:
@@ -22726,6 +22720,8 @@ def update_management_backup_config():
         frequency = str(data.get("frequency") or "off").strip()
         if frequency not in BACKUP_FREQUENCY_INTERVALS:
             raise ValueError("自动备份频率不正确。")
+        if "cos_enabled" in data and not isinstance(data["cos_enabled"], bool):
+            raise ValueError("COS 备份开关必须为布尔值。")
 
         scheduled_time = normalize_backup_scheduled_time(data.get("scheduled_time"))
         destination_path = normalize_backup_destination_path(data.get("destination_path"))
@@ -22744,19 +22740,19 @@ def update_management_backup_config():
 
         current_config = read_backup_config()
         previous_destination_path = current_config.get("destination_path")
+        next_run_at = current_config.get("next_auto_run_at")
+        if not next_run_at or (frequency, scheduled_time) != (
+            current_config["frequency"], current_config["scheduled_time"]
+        ):
+            next_run_at = calculate_next_auto_run_at({"frequency": frequency, "scheduled_time": scheduled_time})
         config = write_backup_config(
             {
                 **current_config,
                 "destination_path": destination_path,
                 "frequency": frequency,
                 "scheduled_time": scheduled_time,
-                "next_auto_run_at": calculate_next_auto_run_at(
-                    {
-                        **current_config,
-                        "frequency": frequency,
-                        "scheduled_time": scheduled_time,
-                    }
-                ),
+                "cos_enabled": data.get("cos_enabled", current_config["cos_enabled"]),
+                "next_auto_run_at": next_run_at,
                 "last_status": current_config.get("last_status") or "idle",
                 "last_error": current_config.get("last_error") or "",
             }

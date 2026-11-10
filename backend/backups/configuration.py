@@ -54,6 +54,7 @@ def get_default_backup_config(default_directory):
     return {
         "destination_path": os.path.abspath(default_directory),
         "frequency": "off",
+        "cos_enabled": True,
         "scheduled_time": "02:00",
         "next_auto_run_at": None,
         "last_auto_export_at": None,
@@ -79,6 +80,7 @@ def normalize_backup_config(config, default_directory):
     if normalized.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
         normalized["frequency"] = "off"
     normalized["scheduled_time"] = normalize_backup_scheduled_time(normalized.get("scheduled_time"))
+    normalized["cos_enabled"] = normalized.get("cos_enabled", True) is True
     if normalized.get("frequency") == "off":
         normalized["next_auto_run_at"] = None
     return normalized

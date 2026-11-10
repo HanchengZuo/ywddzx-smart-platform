@@ -785,6 +785,7 @@ const loginVersionModalOpen = ref(false)
 const sessionCheckIntervalMs = 60 * 1000
 const notificationRefreshIntervalMs = 60 * 1000
 const notificationCacheTtlMs = 15 * 1000
+const notificationForceMinIntervalMs = 3000
 const serverResourceRefreshIntervalMs = 30 * 1000
 const serverResourceCacheTtlMs = 8 * 1000
 const idleLogoutMs = 2 * 60 * 60 * 1000
@@ -863,6 +864,9 @@ const appealNotificationCount = ref(0)
 let notificationSummaryTimer = null
 let notificationSummaryInFlight = null
 let notificationSummaryFetchedAt = 0
+let notificationSummaryStartedAt = 0
+let notificationSummaryTrailingTimer = null
+let notificationSummaryPending = false
 let feedbackMarkReadInFlight = null
 let feedbackMarkedReadAt = 0
 let serverResourceTimer = null
@@ -1398,7 +1402,8 @@ const verifySessionSilently = async () => {
   sessionNotice.checking = true
 
   try {
-    const result = needsPresentationRenewal(presentationKind.value, getStoredAuthSecondsRemaining())
+    const renewing = needsPresentationRenewal(presentationKind.value, getStoredAuthSecondsRemaining())
+    const result = renewing
       ? await renewPresentationSession(presentationKind.value)
       : await verifyAuthSession({ preserveOnTransientError: Boolean(presentationKind.value) })
     if (result.superseded) return
@@ -1408,12 +1413,12 @@ const verifySessionSilently = async () => {
     }
     const user = result.user
     const refreshedToken = result.token || token
-    const expiresIn = Number(result.expiresIn || 0)
     if (user && refreshedToken) {
-      storeAuthSession(user, refreshedToken, expiresIn)
+      if (renewing) storeAuthSession(user, refreshedToken, result.expiresIn)
       syncAuthState()
       showBirthdayBlessing(user?.birthday_event)
     }
+    const expiresIn = getStoredAuthSecondsRemaining()
 
     if (expiresIn > sessionWarningThresholdSeconds) {
       resetSessionNotice()
@@ -1481,7 +1486,9 @@ const handleAuthSessionExpired = (event) => {
 const handleAuthStorageChange = (event) => {
   if (!['auth_token', 'auth_expires_at', 'user_id', 'permissions', 'must_change_password', 'password_policy'].includes(event.key)) return
   syncAuthState()
-  if (isLoginPage.value) return
+  // Profile and expiry writes from another tab are passive, not refresh triggers.
+  if (isLoginPage.value || event.key !== 'auth_token' || event.newValue === event.oldValue) return
+  resetNotificationCounts()
   if (isUsableAuthToken(getStoredAuthToken())) {
     lastUserActivityAt = Date.now()
     scheduleIdleLogout()
@@ -1505,6 +1512,7 @@ const handlePasswordChangeRequired = () => {
 }
 
 const resetNotificationCounts = () => {
+  clearNotificationTrailingRefresh()
   certificateUnreadCount.value = 0
   feedbackUnreadCount.value = 0
   inspectionSignPendingCount.value = 0
@@ -1514,6 +1522,20 @@ const resetNotificationCounts = () => {
   scheduleAgenda.value = null
   appealNotificationCount.value = 0
   notificationSummaryFetchedAt = 0
+}
+
+const clearNotificationTrailingRefresh = () => {
+  window.clearTimeout(notificationSummaryTrailingTimer)
+  notificationSummaryTrailingTimer = null
+  notificationSummaryPending = false
+}
+
+const scheduleNotificationTrailingRefresh = () => {
+  if (notificationSummaryTrailingTimer !== null) return
+  notificationSummaryTrailingTimer = window.setTimeout(() => {
+    notificationSummaryTrailingTimer = null
+    refreshNotificationSummary({ force: true })
+  }, Math.max(0, notificationForceMinIntervalMs - (Date.now() - notificationSummaryStartedAt)))
 }
 
 const applyNotificationSummary = (payload = {}) => {
@@ -1561,21 +1583,33 @@ const markFeedbackRead = async ({ force = false } = {}) => {
 }
 
 const refreshNotificationSummary = async ({ force = false, markFeedback = route.path === '/feedback' } = {}) => {
-  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(getStoredAuthToken())) {
+  const token = getStoredAuthToken()
+  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(token)) {
     resetNotificationCounts()
     return
   }
 
   if (markFeedback) {
-    await markFeedbackRead({ force })
+    await markFeedbackRead()
+    if (getStoredAuthToken() !== token) return
   }
 
   const now = Date.now()
   if (!force && now - notificationSummaryFetchedAt < notificationCacheTtlMs) return
-  if (notificationSummaryInFlight) return notificationSummaryInFlight
+  if (notificationSummaryInFlight) {
+    if (force) notificationSummaryPending = true
+    return notificationSummaryInFlight
+  }
+  if (now - notificationSummaryStartedAt < notificationForceMinIntervalMs) {
+    if (force) scheduleNotificationTrailingRefresh()
+    return
+  }
 
-  notificationSummaryInFlight = axios.get('/api/notifications/summary')
+  clearNotificationTrailingRefresh()
+  notificationSummaryStartedAt = now
+  notificationSummaryInFlight = axios.get('/api/notifications/summary', { timeout: 15000 })
     .then((response) => {
+      if (getStoredAuthToken() !== token) return
       applyNotificationSummary(response.data || {})
       if (markFeedback) feedbackUnreadCount.value = 0
       notificationSummaryFetchedAt = Date.now()
@@ -1587,6 +1621,10 @@ const refreshNotificationSummary = async ({ force = false, markFeedback = route.
     })
     .finally(() => {
       notificationSummaryInFlight = null
+      if (notificationSummaryPending) {
+        notificationSummaryPending = false
+        scheduleNotificationTrailingRefresh()
+      }
     })
   return notificationSummaryInFlight
 }
@@ -1748,6 +1786,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearNotificationTrailingRefresh()
   pageVisibilityPolling.dispose()
   document.removeEventListener('visibilitychange', syncPageVisibilityPolling)
   window.removeEventListener('online', syncPageVisibilityPolling)

@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from .cos import backup_result_metadata
+
 
 class TaskLock(Protocol):
     def acquire(self, blocking: bool = True) -> bool: ...
@@ -30,18 +32,10 @@ class BackupTransfers:
         try:
             config = self.read_config()
             result = self.create_archive(config.get('destination_path'), reason='manual')
-            cos_result = result.get('cos') or {}
-            cos_status = cos_result.get('status') or 'not_configured'
             config.update({
                 'last_backup_path': result['path'],
                 'last_backup_size': result['size'],
-                'last_cos_status': cos_status,
-                'last_cos_key': cos_result.get('key'),
-                'last_cos_uploaded_at': cos_result.get('uploaded_at'),
-                'last_cos_retained_count': cos_result.get('retained_count') or 0,
-                'last_cos_error': cos_result.get('message') if cos_status == 'error' else '',
-                'last_status': 'warning' if cos_status == 'error' else 'success',
-                'last_error': cos_result.get('message') if cos_status == 'error' else '',
+                **backup_result_metadata(result.get('cos') or {}),
             })
             self.write_config(config)
         finally:

@@ -116,6 +116,20 @@ class BackupConfigurationContractTests(unittest.TestCase):
         self.assertEqual(response.json['latest_backups'][0]['path'], str(archive))
         self.cleanup.assert_not_called(); self.assertEqual(archive.read_bytes(), b'test')
 
+    def test_cos_switch_is_boolean_and_preserves_local_schedule_and_older_clients(self):
+        before = api.write_backup_config(dict(frequency='weekly', scheduled_time='00:00',
+            next_auto_run_at='2026-10-22T00:00:00+08:00', last_cos_key='previous'))
+        for value in ('false', 0, None):
+            self.assertEqual(self.call('PUT', frequency='weekly', cos_enabled=value).status_code, 400)
+        response = self.call('PUT', frequency='weekly', scheduled_time='00:00', cos_enabled=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.json['config']['cos_enabled'], False)
+        self.assertEqual(response.json['config']['next_auto_run_at'], before['next_auto_run_at'])
+        self.assertEqual(response.json['config']['last_cos_key'], 'previous')
+        self.assertEqual(self.call('PUT', frequency='weekly', scheduled_time='00:00').status_code, 200)
+        self.assertIs(api.read_backup_config()['cos_enabled'], False)
+        self.cleanup.assert_not_called()
+
     def test_config_validation_and_write_failures_never_cleanup_previous_directory(self):
         api.write_backup_config({})
         before = self.path.read_bytes()

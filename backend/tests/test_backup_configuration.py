@@ -29,7 +29,7 @@ class BackupConfigurationTests(unittest.TestCase):
     def test_defaults_are_fresh_complete_and_do_not_create_files(self):
         config = api.get_default_backup_config()
         self.assertEqual(config, dict(
-            destination_path=str(self.root / 'archives'), frequency='off', scheduled_time='02:00',
+            destination_path=str(self.root / 'archives'), frequency='off', scheduled_time='02:00', cos_enabled=True,
             next_auto_run_at=None, last_auto_export_at=None, last_backup_path=None,
             last_backup_size=None, last_cos_status='not_configured', last_cos_key=None,
             last_cos_uploaded_at=None, last_cos_retained_count=0, last_cos_error='',

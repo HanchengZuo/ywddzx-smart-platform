@@ -25,7 +25,10 @@ def get_cos_env_config(*, environ, prefix, retention_count, sdk_available):
 
 
 def get_cos_public_status(cos_config, config=None, error=""):
-    if not cos_config["configured"]:
+    if (config or {}).get("cos_enabled") is False:
+        status = "disabled"
+        message = "COS 备份已关闭，当前仅保留本地备份。"
+    elif not cos_config["configured"]:
         status = "not_configured"
         message = "未配置 COS 环境变量，当前仅保留本地备份。"
     elif not cos_config["sdk_available"]:
@@ -185,9 +188,26 @@ def upload_backup_archive_to_cos(
 def get_cos_backup_overview(config=None, *, get_public_status, list_objects, retention_count):
     status = get_public_status(config)
     backups = []
-    if status["configured"] and status["sdk_available"]:
+    if status.get("status") != "disabled" and status["configured"] and status["sdk_available"]:
         try:
             backups = list_objects()[:retention_count]
         except Exception as exc:
             status = get_public_status(config, f"COS 备份列表读取失败：{str(exc)}")
     return status, backups
+
+
+def backup_result_metadata(result):
+    status = result.get("status") or "not_configured"
+    updates = {
+        "last_cos_status": status,
+        "last_cos_error": result.get("message") if status == "error" else "",
+        "last_status": "warning" if status == "error" else "success",
+        "last_error": result.get("message") if status == "error" else "",
+    }
+    if status != "disabled":
+        updates.update(
+            last_cos_key=result.get("key"),
+            last_cos_uploaded_at=result.get("uploaded_at"),
+            last_cos_retained_count=result.get("retained_count") or 0,
+        )
+    return updates

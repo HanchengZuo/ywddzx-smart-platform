@@ -4,11 +4,11 @@
       <div class="hero-content">
         <div class="page-kicker">管理系统</div>
         <h2>数据备份管理</h2>
-        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录。本地与腾讯云 COS 各保留最近 1 份备份，支持超过 5GB 的分块上传。</p>
+        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录。本地保留最近 1 份，可选同步到腾讯云 COS。</p>
         <div v-if="hasPermission" class="hero-meta">
           <span>自动备份：{{ frequencyLabel(config.frequency) }}</span>
           <span>本地位置：{{ config.destination_path || '默认目录' }}</span>
-          <span>COS：{{ cosStatus.configured ? `${cosStatus.bucket} · ${cosStatus.region}` : '未配置' }}</span>
+          <span>COS：{{ !config.cos_enabled ? '已关闭' : cosStatus.configured ? `${cosStatus.bucket} · ${cosStatus.region}` : '未配置' }}</span>
         </div>
       </div>
       <div v-if="hasPermission" class="header-actions action-panel">
@@ -41,7 +41,7 @@
             <div>
               <div class="section-kicker">自动备份设置</div>
               <h3>设置备份频率和本地保存位置</h3>
-              <p>本地保存位置是后端服务器可访问路径；每次备份都会覆盖同一份本地文件，并同步上传到腾讯云 COS。</p>
+              <p>本地保存位置是后端服务器可访问路径，每次备份都会更新同一份本地文件。</p>
             </div>
           </div>
 
@@ -65,6 +65,14 @@
               <span>固定执行时间</span>
               <input v-model="form.scheduled_time" type="time" :disabled="form.frequency === 'off' || form.frequency === 'hourly'" />
               <small>{{ form.frequency === 'hourly' ? '每小时模式按间隔执行。' : '按北京时间执行，例如 02:00。' }}</small>
+            </label>
+
+            <label class="cos-switch">
+              <span><strong>同步到腾讯云 COS</strong><small>同时适用于自动和手动备份。关闭后仅保留本地备份，不删除已有云端文件。</small></span>
+              <span class="cos-switch-control">
+                <input v-model="form.cos_enabled" type="checkbox" role="switch" aria-label="同步到腾讯云 COS" :disabled="loading || savingConfig" />
+                {{ form.cos_enabled ? '开启' : '关闭' }}
+              </span>
             </label>
 
             <div class="config-summary">
@@ -195,7 +203,10 @@
           </div>
         </div>
 
-        <div v-if="!cosStatus.configured" class="cos-empty">
+        <div v-if="!config.cos_enabled" class="cos-empty">
+          已关闭 COS 备份，不查询或清理云端文件，本地备份继续运行。
+        </div>
+        <div v-else-if="!cosStatus.configured" class="cos-empty">
           未检测到完整 COS 环境变量，当前仅执行本地备份。
         </div>
         <div v-else-if="cosStatus.status === 'error'" class="cos-empty error">
@@ -260,6 +271,7 @@ const message = reactive({
 const config = reactive({
   destination_path: '',
   frequency: 'off',
+  cos_enabled: true,
   scheduled_time: '02:00',
   next_auto_run_at: '',
   next_run_at: '',
@@ -294,6 +306,7 @@ const cosStatus = reactive({
 const form = reactive({
   destination_path: '',
   frequency: 'off',
+  cos_enabled: true,
   scheduled_time: '02:00'
 })
 
@@ -306,6 +319,7 @@ const syncConfig = (nextConfig = {}) => {
   Object.assign(config, {
     destination_path: nextConfig.destination_path || '',
     frequency: nextConfig.frequency || 'off',
+    cos_enabled: nextConfig.cos_enabled !== false,
     scheduled_time: nextConfig.scheduled_time || '02:00',
     next_auto_run_at: nextConfig.next_auto_run_at || '',
     next_run_at: nextConfig.next_run_at || '',
@@ -327,6 +341,7 @@ const syncConfig = (nextConfig = {}) => {
   })
   form.destination_path = config.destination_path
   form.frequency = config.frequency
+  form.cos_enabled = config.cos_enabled
   form.scheduled_time = config.scheduled_time
 }
 
@@ -339,7 +354,7 @@ const statusText = computed(() => {
 
 const scheduleSummary = computed(() => {
   if (form.frequency === 'off') return '自动备份已关闭，仅保留手动备份能力。'
-  if (form.frequency === 'hourly') return '系统每小时自动生成一次完整备份，并上传 COS。'
+  if (form.frequency === 'hourly') return '系统每小时自动生成一次完整备份。'
   if (form.frequency === 'daily') return `系统每天 ${form.scheduled_time || '02:00'} 自动备份。`
   if (form.frequency === 'weekly') return `系统每周按上次执行日期推进，并在 ${form.scheduled_time || '02:00'} 自动备份。`
   if (form.frequency === 'monthly') return `系统每 30 天推进一次，并在 ${form.scheduled_time || '02:00'} 自动备份。`
@@ -406,6 +421,7 @@ const saveConfig = async () => {
       user_id: currentUserId,
       destination_path: form.destination_path,
       frequency: form.frequency,
+      cos_enabled: form.cos_enabled,
       scheduled_time: form.scheduled_time || '02:00'
     })
     syncConfig(response.data?.config || {})
@@ -462,7 +478,9 @@ const exportBackup = async () => {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(blobUrl)
-    setMessage('完整备份已生成并开始下载，本地已覆盖为最新备份；云端上传结果请查看最近任务状态，成功后仅保留最近 1 份。', 'success')
+    setMessage(response.headers['x-cos-backup-status'] === 'disabled'
+      ? '完整备份已生成并开始下载；已保存本地，未上传 COS。'
+      : '完整备份已生成并开始下载；已保存本地，云端上传结果请查看最近任务状态。', 'success')
     await fetchBackups()
   } catch (error) {
     setMessage(await readBlobError(error, '完整备份导出失败。'), 'error')
@@ -777,6 +795,24 @@ onMounted(fetchBackups)
   color: #64748b;
   font-size: 12px;
 }
+
+.cos-switch {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #d7e0ea;
+  border-radius: 14px;
+  color: #243c54;
+  background: #f5f9fc;
+  cursor: pointer;
+}
+
+.cos-switch small { display: block; margin-top: 4px; color: #52677d; }
+.cos-switch-control { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-weight: 700; }
+.cos-switch-control input { width: 20px; height: 20px; accent-color: #0f766e; cursor: pointer; }
 
 .config-summary {
   grid-column: span 3;

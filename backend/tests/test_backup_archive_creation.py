@@ -52,6 +52,7 @@ class BackupArchiveCreationTests(unittest.TestCase):
         self.pack = self.observe('add_storage_to_backup', 'pack')
         self.publish = self.observe('publish_backup_archive', 'publish')
         self.cleanup = self.observe('cleanup_local_backup_files', 'cleanup')
+        self.real_upload = api.upload_backup_archive_to_cos
         self.upload = self.stack.enter_context(patch.object(api, 'upload_backup_archive_to_cos', side_effect=self.upload_archive))
 
     def file(self, path, data):
@@ -116,6 +117,21 @@ class BackupArchiveCreationTests(unittest.TestCase):
         self.assertFalse(self.stale.exists()); self.assertFalse(self.default_stale.exists())
         self.assertEqual(self.config.read_bytes(), self.previous_config)
         self.assert_work_clean(); self.connect.assert_not_called()
+
+    def test_disabled_cos_still_publishes_valid_local_backup(self):
+        api.write_backup_config(dict(cos_enabled=False, last_cos_key='prior', last_cos_uploaded_at='prior date'))
+        self.upload.side_effect = self.real_upload
+        with patch.object(api, 'run_bounded_upload') as worker:
+            result = self.create()
+            worker.assert_not_called()
+        self.assertEqual(result['cos']['status'], 'disabled')
+        with zipfile.ZipFile(result['path']) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.read('storage/issues/photo.png'), b'photo')
+        api.mark_auto_backup_result(True, result)
+        saved = api.read_backup_config()
+        self.assertEqual((saved['last_status'], saved['last_cos_status'], saved['last_cos_key']),
+                         ('success', 'disabled', 'prior'))
 
     def test_default_destination_only_cleans_one_directory(self):
         self.destination = self.default
