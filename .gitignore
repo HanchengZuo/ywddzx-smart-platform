@@ -41,5 +41,3 @@ storage/
 frontend/node_modules/
 /.codex/tmp/
 
-# Codex temporary files
-/.codex/tmp/
