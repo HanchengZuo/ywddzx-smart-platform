@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.5', date: '2026-11-18', title: '档期快捷设置与排班筛选',
+    summary: '人员档期可单击切换空闲状态，巡检排班支持按单元格颜色及人员搜索。',
+    items: ['快捷模式自动保存今天及未来未分组、未派工的空闲状态，保留权限、实绩锁定与冲突校验。', '现场、计量现场、视频排班按颜色和姓名或用户名组合筛选，匹配项标记，保留整站信息。'] },
   { version: 'v13.4.1', date: '2026-11-08', title: '非油复核清单按阶段查看',
     summary: '非油事业部默认只看待本部门终审的问题，等待片区复核可通过带角标的入口查看。',
     items: ['角标显示全部等待片区复核事项数，不随筛选变化。等待片区或盛大现场复核的事项仍只读。'] },

@@ -40,6 +40,13 @@ export function availabilityLabel(person, mode) {
   if (!personCanSchedule(person, mode)) return '已安排另一种检查'
   return '有空'
 }
+export function canQuickToggleAvailability(cell, day, today, canEdit) {
+  return Boolean(
+    canEdit && cell && day >= today && !cell.read_only && !cell.has_actual &&
+    !(cell.actual_modes || []).length && !(cell.planned_modes || []).length &&
+    !cell.daily_assignment && !cell.dispatch?.total && !cell.dispatch?.has_dispatch,
+  )
+}
 export function staffCellPresentation(cell, day, today) {
   const actual = cell.actual_modes || []
   const actualDetail = actual

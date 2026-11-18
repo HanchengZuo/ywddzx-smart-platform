@@ -127,14 +127,27 @@
         <option value="partial_completed">部分已检查</option>
         <option value="partial_assigned">部分排班，需补排</option>
         <option value="blocked">检查表异常</option></select
-      ><button
-        v-if="keyword || region || state"
+      >
+      <select v-model="cellColor" :aria-label="title + '单元格颜色'">
+        <option value="">全部单元格颜色</option>
+        <option v-for="option in scheduleCellColorOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <input v-model.trim="inspectorKeyword" type="search" :aria-label="title + '人员搜索'"
+        placeholder="搜索姓名或用户名（计划 / 实际）" />
+      <button
+        v-if="hasFilters"
         type="button"
         class="text-button"
         @click="clearFilters"
       >
         清除筛选</button
       ><span>{{ rows.length }} 个站点</span>
+    </div>
+    <div v-if="cellColor || inspectorKeyword" class="cell-filter-summary" role="status">
+      <i v-if="cellColor" :style="{ background: scheduleCellColorOptions.find(o => o.value === cellColor)?.color }" aria-hidden="true"></i>
+      {{ cellColor ? scheduleCellColorOptions.find(o => o.value === cellColor)?.label : '全部颜色' }}
+      <span v-if="inspectorKeyword"> · 人员：{{ inspectorKeyword }}</span>
+      <small>同一单元格符合条件即保留整站，匹配项以边框标记；计划与实际检查人均可搜索。</small>
     </div>
     <p v-if="mode === 'annual'" class="roster-note">
       现场与可用的视频项整行一起安排外勤组；视频仅适用于“监控未运行”站点，其余置灰，不参与应检站点进度统计。年度派站同步季度现场，季度派站按当月计量片区配额联动。两表共用今日外勤调度待选区。
@@ -249,7 +262,7 @@
                   ? '暂时无法读取，请重试。'
                   : !board
                     ? '排班数据尚未加载，正在连接服务器…'
-                    : keyword || region || state
+                    : hasFilters
                       ? '没有匹配的站点，请调整筛选条件。'
                       : '当前没有纳入本计划的名单站点。'
               }}
@@ -285,6 +298,7 @@
                 row.cells[column.key].status,
                 { overdue: row.cells[column.key].overdue, 'row-locked': scheduleRowLocked(row) },
                 { 'is-self': !!scheduleSelfRole(row.cells[column.key], board.current_user_id) },
+                { 'filter-match': (cellColor || inspectorKeyword) && scheduleCellMatches(row.cells[column.key], cellColor, inspectorKeyword) },
               ]"
               @dragover.prevent
               @drop.stop.prevent="dropOn(row, $event)"
@@ -746,6 +760,8 @@ import {
   scheduleCounts,
   scheduleStatusLabels,
   shelfHasCapacity,
+  scheduleCellColorOptions,
+  scheduleCellMatches,
 } from '@/utils/inspectionSchedule'
 
 const props = defineProps({ mode: { type: String, required: true }, focusDay: { type: String, default: '' } })
@@ -770,6 +786,8 @@ const error = ref(''),
   keyword = ref(''),
   region = ref(''),
   state = ref('')
+const cellColor = ref(''), inspectorKeyword = ref('')
+const hasFilters = computed(() => Boolean(keyword.value || region.value || state.value || cellColor.value || inspectorKeyword.value))
 // Browser network hints can be false even while this server remains reachable.
 // Only a completed board request determines whether cached data is safe to edit.
 const updatedTime = ref(''),
@@ -806,7 +824,7 @@ const canEdit = computed(() =>
   Boolean(board.value?.can_edit && online.value && !error.value && !blocked.value),
 )
 const rows = computed(() =>
-  filterScheduleRows(board.value?.rows || [], region.value, keyword.value, state.value),
+  filterScheduleRows(board.value?.rows || [], region.value, keyword.value, state.value, cellColor.value, inspectorKeyword.value),
 )
 const regions = computed(() => [...new Set((board.value?.rows || []).map((row) => row.region))])
 const counts = computed(() => scheduleCounts(rows.value))
@@ -1137,6 +1155,8 @@ const clearFilters = () => {
   keyword.value = ''
   region.value = ''
   state.value = ''
+  cellColor.value = ''
+  inspectorKeyword.value = ''
 }
 
 async function loadBoard() {
@@ -1379,7 +1399,7 @@ watch(
     }, 180)
   },
 )
-watch([keyword, region, state], () => {
+watch([keyword, region, state, cellColor, inspectorKeyword], () => {
   selectedCells.value = []
 })
 onMounted(() => {
@@ -1782,6 +1802,10 @@ input[type='search'] {
   font-size: 12px;
   color: #71849a;
 }
+.cell-filter-summary { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:0 24px 12px; color:#294e65; font-size:12px; }
+.cell-filter-summary i { width:12px; height:12px; border:1px solid #a6b8c7; border-radius:3px; }
+.cell-filter-summary small { flex-basis:100%; color:#526b7d; font-size:12px; }
+.schedule-matrix .matrix-cell.filter-match { outline:2px solid #247c9c; outline-offset:-4px; }
 .bulk-toolbar {
   display: flex;
   align-items: center;

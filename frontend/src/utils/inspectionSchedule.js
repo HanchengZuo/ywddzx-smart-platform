@@ -44,7 +44,32 @@ export function stationScheduleProgress(row) {
   }
 }
 
-export function filterScheduleRows(rows, region, keyword, state = '') {
+export const scheduleCellColorOptions = [
+  { value: 'green', label: '绿色 · 已检查', color: '#bce6cc' },
+  { value: 'red', label: '红色 · 已排班', color: '#f3b9be' },
+  { value: 'yellow', label: '黄色 · 逾期未检查', color: '#f3d78d' },
+  { value: 'neutral', label: '浅色 · 待排班', color: '#e8eff5' },
+  { value: 'gray', label: '灰色 · 不适用 / 异常免检', color: '#cbd5df' },
+]
+
+export function scheduleCellColor(cell) {
+  if (cell.status === 'completed') return 'green'
+  if (cell.status === 'assigned') return cell.overdue ? 'yellow' : 'red'
+  if (cell.status === 'unassigned') return 'neutral'
+  return 'gray'
+}
+
+export function scheduleCellMatches(cell, color = '', person = '') {
+  if (color && scheduleCellColor(cell) !== color) return false
+  const query = String(person || '').trim().toLocaleLowerCase()
+  if (!query) return true
+  // Search plan and actual independently; never substitute one for the other.
+  return [...(cell.assignees || []), ...(cell.completed_inspectors || [])].some(
+    (p) => [p.display_name, p.username].filter(Boolean).join(' ').toLocaleLowerCase().includes(query),
+  )
+}
+
+export function filterScheduleRows(rows, region, keyword, state = '', color = '', person = '') {
   const query = String(keyword || '')
     .trim()
     .toLocaleLowerCase()
@@ -53,6 +78,9 @@ export function filterScheduleRows(rows, region, keyword, state = '') {
       (region && row.region !== region) ||
       (query && ![row.station_name, row.region].join(' ').toLocaleLowerCase().includes(query))
     )
+      return false
+    if ((color || String(person || '').trim()) &&
+        !Object.values(row.cells || {}).some((cell) => scheduleCellMatches(cell, color, person)))
       return false
     if (!state) return true
     const progress = stationScheduleProgress(row)

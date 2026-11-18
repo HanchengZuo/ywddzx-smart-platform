@@ -23,10 +23,10 @@
     <section class="surface staff-board" :class="{ 'staff-board--compact': compact }">
       <div class="week-controls">
         <div class="week-picker">
-          <button type="button" aria-label="查看上一周" @click="moveWeek(-7)">← 上一周</button>
-          <label>查看日期<input v-model="week" type="date" aria-label="人员档期查看日期" /></label>
-          <button type="button" aria-label="查看下一周" @click="moveWeek(7)">下一周 →</button>
-          <button type="button" class="this-week" @click="week = shanghaiToday()">本周</button>
+          <button type="button" :disabled="saving" aria-label="查看上一周" @click="moveWeek(-7)">← 上一周</button>
+          <label>查看日期<input v-model="week" :disabled="saving" type="date" aria-label="人员档期查看日期" /></label>
+          <button type="button" :disabled="saving" aria-label="查看下一周" @click="moveWeek(7)">下一周 →</button>
+          <button type="button" :disabled="saving" class="this-week" @click="week = shanghaiToday()">本周</button>
         </div>
         <div class="week-caption">
           <strong>{{ weekCaption }}</strong>
@@ -36,6 +36,15 @@
           <button type="button" :aria-pressed="!compact" @click="setCompact(false)">全量模式</button>
           <button type="button" :aria-pressed="compact" @click="setCompact(true)">极简模式</button>
         </div>
+        <button v-if="board?.can_edit" class="quick-mode-button" type="button"
+          :aria-pressed="quickMode" :disabled="saving" @click="quickMode = !quickMode">
+          {{ quickMode ? '退出快捷设置' : '快捷设置有空 / 没空' }}
+        </button>
+      </div>
+      <div v-if="quickMode && board?.can_edit" class="quick-mode-note" role="status">
+        <div><strong>快捷设置中 · 单击切换，自动保存</strong>
+          <span>有空 → 没空；没空或未确认 → 有空。仅修改今天及未来未分组、未派工的档期，其他单元格仍打开详情。</span></div>
+        <label>没空原因<input v-model.trim="quickReason" maxlength="4" placeholder="选填，最多4字" :disabled="saving" /></label>
       </div>
       <div v-if="board" class="staff-stats" :aria-label="'今日档期概况 · ' + board.today">
         <div v-for="item in summaryItems" :key="item.key" :class="'stat-' + item.key">
@@ -151,13 +160,14 @@
                     { 'is-actual': state(person, day).stage === '实绩' },
                     { 'is-self': isCurrentPerson(person, board.current_user_id) },
                   ]"
-                  :disabled="loading || !!error"
+                  :disabled="loading || saving || !!error"
                   :aria-label="
                     person.display_name + '，' + day.day + '，' + state(person, day).label + '，' + state(person, day).stage
                   "
                   :title="compact ? compactCellTitle(person, day) : undefined"
-                  @click="openCell(person, day)"
+                  @click="handleCellClick(person, day)"
                 >
+                  <span v-if="quickMode && quickEligible(person, day)" class="quick-cell-mark" aria-hidden="true">↔</span>
                   <template v-if="compact">
                     <b>{{ compactLabels[state(person, day).tone] || state(person, day).label }}</b>
                     <span v-if="state(person, day).stage === '实绩'" class="actual-mark" aria-hidden="true">实</span>
@@ -193,6 +203,8 @@
       </footer>
     </section>
     <Teleport to="body">
+      <TransientNotice v-if="!selection" class="quick-warning" :message="warningToast"
+        :sequence="warningSequence" @dismiss="warningToast = ''" />
       <dialog
         ref="dialog"
         class="staff-dialog"
@@ -327,6 +339,7 @@ import {
   staffCellPresentation,
   staffTodaySummary,
   isCurrentPerson,
+  canQuickToggleAvailability,
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { actualsRefreshDelay } from '@/utils/staffActuals'
@@ -350,6 +363,8 @@ function setCompact(value) {
   }
 }
 const compactLabels = { offline: '现场', online: '视频', mixed: '双项', past: '无记录' }
+const quickMode = ref(false)
+const quickReason = ref('')
 const warningToast = ref(''),
   warningSequence = ref(0)
 function warn(message) {
@@ -425,6 +440,38 @@ function state(person, day) {
 function compactCellTitle(person, day) {
   const current = state(person, day)
   return [current.stage, current.label, current.detail].filter(Boolean).join(' · ')
+}
+function quickEligible(person, day) {
+  return canQuickToggleAvailability(person.cells[day.day], day.day, board.value.today, board.value.can_edit)
+}
+async function handleCellClick(person, day) {
+  if (saving.value || loading.value) return
+  if (!quickMode.value || !quickEligible(person, day)) return openCell(person, day)
+  warningToast.value = ''
+  const cell = person.cells[day.day]
+  const nextAvailable = cell.available !== true
+  saving.value = true
+  polling.pause()
+  notice.value = ''
+  try {
+    await axios.put('/api/staff-availability', {
+      cells: [{ person_name: person.display_name, day: day.day, revision: cell.revision }],
+      available: nextAvailable, reason: nextAvailable ? '' : quickReason.value, quick_toggle: true,
+    }, { timeout: 30000 })
+    if (disposed) return
+    notice.value = `${person.display_name} · ${day.day} 已设为${nextAvailable ? '有空' : '没空'}。`
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    await load()
+  } catch (err) {
+    if (!disposed) {
+      warn(err.response?.data?.error || '保存失败，未确认修改结果，请重新核对。')
+      await load()
+    }
+  } finally {
+    saving.value = false
+    if (!disposed) polling.start()
+  }
 }
 async function load() {
   if (blocked.value || disposed) return
@@ -690,6 +737,15 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.quick-mode-button { padding:9px 14px; border:1px solid #207687; border-radius:9px; background:#edf7f8; color:#175669; font:inherit; font-size:13px; font-weight:700; cursor:pointer; }
+.quick-mode-button[aria-pressed="true"] { background:#195b70; color:#fff; }
+.quick-mode-button:disabled { opacity:.6; cursor:wait; }
+.quick-mode-note { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 20px; margin:0 22px 14px; padding:12px 16px; border:1px solid #a8cdd7; border-left:4px solid #207687; border-radius:10px; background:#eef8fa; color:#24566b; font-size:13px; line-height:1.6; }
+.quick-mode-note strong,.quick-mode-note span { display:block; }
+.quick-mode-note label { display:flex; align-items:center; gap:8px; }
+.quick-mode-note input { width:140px; min-height:34px; border:1px solid #abc6d1; border-radius:7px; padding:0 8px; background:#fff; color:#243e51; font:inherit; }
+.quick-cell-mark { display:inline-block; font-size:12px; opacity:.8; }
+.quick-warning { position:fixed; top:calc(var(--app-header-height, 84px) + 12px); z-index:2000; }
 .cell-stage em {
   font-style: normal;
   font-size: 9px;

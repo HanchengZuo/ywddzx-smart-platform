@@ -14,8 +14,25 @@ import {
   taskGroups,
   isCurrentPerson,
   scheduleSelfRole,
+  canQuickToggleAvailability,
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable, scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
+
+test('quick availability changes are restricted to current/future cells without teams, dispatch or actuals', () => {
+  const today='2026-11-18'
+  const cell={available:true,revision:2,read_only:false}
+  for (const available of [true,false,null]) {
+    assert.equal(canQuickToggleAvailability({...cell,available},today,today,true),true)
+    assert.equal(canQuickToggleAvailability({...cell,available},'2026-11-19',today,true),true)
+  }
+  assert.equal(canQuickToggleAvailability(cell,'2026-11-17',today,true),false)
+  assert.equal(canQuickToggleAvailability(cell,today,today,false),false)
+  for (const patch of [{read_only:true},{has_actual:true},{actual_modes:[{mode:'offline'}]},
+    {planned_modes:['online']},{daily_assignment:{mode:'online'}},{dispatch:{total:1}},
+    {dispatch:{has_dispatch:true}}]) {
+    assert.equal(canQuickToggleAvailability({...cell,...patch},today,today,true),false)
+  }
+})
 
 test('system-default availability is explicit, while busy overrides remain red and future remains unconfirmed', () => {
   const today='2026-10-21'

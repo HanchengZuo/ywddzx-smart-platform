@@ -9,6 +9,8 @@ import {
   scheduleCounts,
   stationScheduleProgress,
   scheduleRowLocked,
+  scheduleCellMatches,
+  scheduleCellColor,
 } from '../src/utils/inspectionSchedule.js'
 
 const people = [1, 2, 3].map((id) => ({ id, display_name: '人员' + id }))
@@ -30,6 +32,29 @@ const rows = [
     cells: { a: { status: 'unassigned' }, b: { status: 'unavailable' } },
   },
 ]
+
+test('color filters use actual cell fill, distinguish overdue plans, and intersect people in the same cell', () => {
+  const cells = [
+    {status:'completed',assignees:[{display_name:'原安排',username:'planned'}],completed_inspectors:[{display_name:'实绩人',username:'actual'}]},
+    {status:'assigned',overdue:false,assignees:[{display_name:'张三',username:'zhangsan'}]},
+    {status:'assigned',overdue:true,assignees:[{display_name:'李四',username:'lisi'}]},
+    {status:'unassigned'}, {status:'unavailable',applicable:false}, {status:'exception'},
+  ]
+  assert.deepEqual(cells.map(scheduleCellColor), ['green','red','yellow','neutral','gray','gray'])
+  assert.equal(scheduleCellMatches(cells[0], 'green', ' ACTUAL '), true)
+  assert.equal(scheduleCellMatches(cells[0], 'green', 'planned'), true)
+  assert.equal(scheduleCellMatches(cells[1], 'yellow', '张三'), false)
+  assert.equal(scheduleCellMatches(cells[1], 'red', 'zhang'), true)
+  const stations = [
+    {station_name:'甲',region:'浦东',cells:{a:cells[0],b:cells[1]}},
+    {station_name:'乙',region:'松金',cells:{a:cells[2],b:cells[3]}},
+  ]
+  assert.deepEqual(filterScheduleRows(stations, '', '', '', 'green', 'zhang'), [])
+  assert.deepEqual(filterScheduleRows(stations, '松金', '乙', 'assigned', 'yellow', 'lisi'), [])
+  assert.deepEqual(filterScheduleRows(stations, '', '', '', 'yellow', 'lisi'), [stations[1]])
+  assert.deepEqual(filterScheduleRows(stations, '', '', '', 'red'), [stations[0]])
+  assert.equal(stations[0].cells.a.status,'completed')
+})
 
 test('completed cells display actual people, not the planned person; long lists have a count', () => {
   assert.equal(inspectorPreview(completed), '人员1、人员2 等3人')

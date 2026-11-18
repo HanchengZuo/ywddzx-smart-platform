@@ -79,6 +79,25 @@ class StaffDatabaseTests(unittest.TestCase):
         self.cur.execute("SELECT (SELECT count(*) FROM inspection_schedule_cells) AS cells,(SELECT count(*) FROM inspection_schedule_tasks WHERE status='pending') AS tasks")
         return dict(self.cur.fetchone())
 
+    def test_quick_toggle_preserves_permissions_audit_revision_and_team_safety(self):
+        self.assertEqual(self.availability(day='2026-10-21', quick_toggle=True).status_code,200)
+        self.assertEqual(self.availability(day='2026-10-21', available=False, reason='出差',quick_toggle=True).status_code,200)
+        self.assertEqual(self.availability(day='2026-10-21', available=False,quick_toggle=True).status_code,409)
+        response=self.client.put('/api/staff-availability',json=dict(
+            cells=[dict(person_name='步雪琼',day='2026-10-21',revision=1)],available=True,quick_toggle=True))
+        self.assertEqual(response.status_code,409)
+        self.assertEqual(self.availability(day='2026-10-21',available=True,quick_toggle=True).status_code,200)
+        self.cur.execute("SELECT available,reason,revision FROM staff_availability WHERE person_name='步雪琼' AND day='2026-10-21'")
+        self.assertEqual(dict(self.cur.fetchone()),dict(available=True,reason='',revision=3))
+        self.cur.execute("SELECT count(*) AS n FROM staff_availability_events WHERE person_name='步雪琼' AND day='2026-10-21'")
+        self.assertEqual(self.cur.fetchone()['n'],3)
+        # A team added since the browser loaded must not be dissolved by a shortcut.
+        self.assertEqual(self.availability(day='2026-10-20',available=False,quick_toggle=True).status_code,409)
+        self.cur.execute("SELECT assignments FROM staff_daily_teams WHERE day='2026-10-20'")
+        self.assertEqual(len(self.cur.fetchone()['assignments']),2)
+        self.permissions.discard(EDIT)
+        self.assertEqual(self.availability(day='2026-10-21',available=False,quick_toggle=True).status_code,403)
+
     def test_permissions_are_independent_and_edit_requires_view(self):
         self.permissions.discard(EDIT)
         self.assertEqual(self.availability().status_code, 403)

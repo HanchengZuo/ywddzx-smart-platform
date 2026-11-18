@@ -196,6 +196,12 @@ def save_availability(cur, actor, data, *, sync_plans):
     cell = single_staff_cell(cur,people[name],day,previous,window=window)
     if cell['read_only_reason']:
         raise ScheduleConflict(cell['read_only_reason'])
+    if data.get('quick_toggle'):
+        if (historical or cell['daily_assignment'] or cell['planned_modes'] or cell['has_actual']
+                or cell['dispatch'].get('total') or cell['dispatch'].get('has_dispatch')):
+            raise ScheduleConflict('此档期已有分组、派工或实绩，请打开详情调整。')
+        if available != (cell['available'] is not True):
+            raise ScheduleConflict('档期状态已变化，请刷新后重新点击。')
     if not historical and not available and people[name]['id']:
         saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
         before = saved.get('assignments', [])
