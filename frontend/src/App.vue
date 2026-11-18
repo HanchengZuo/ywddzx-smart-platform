@@ -146,6 +146,10 @@
     <header class="mobile-topbar">
       <button class="mobile-menu-btn" type="button" @click="toggleMobileMenu">☰</button>
       <div class="mobile-topbar-title">{{ sidebarTitle }}</div>
+      <button class="mobile-notification-button" type="button" @click="go('/notifications')"
+        :aria-label="`通知中心，${messageUnreadCount}条未读`">信
+        <span v-if="messageUnreadCount > 0" class="notification-unread-badge">{{ messageUnreadCount > 99 ? '99+' : messageUnreadCount }}</span>
+      </button>
       <ScheduleTaskInbox v-if="!authState.mustChangePassword && (isSupervisor || scheduleTaskPendingCount > 0)" :key="'mobile:' + authState.userId" compact :count="scheduleTaskPendingCount" :agenda="scheduleAgenda" @count="scheduleTaskPendingCount = $event" />
       <div class="mobile-resource-chip" :class="serverResourceHealthClass" :title="serverResourceTooltip">
         <span class="server-resource-dot"></span>
@@ -324,7 +328,9 @@
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
         <button class="nav-item" :class="{ active: isActive('/notifications'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/notifications')" :title="sidebarCollapsed ? '通知中心' : ''">
-          <span class="nav-item-icon">信</span><span v-if="!sidebarCollapsed">通知中心</span>
+          <span class="nav-item-icon feedback-nav-icon">信
+            <span v-if="messageUnreadCount > 0" class="feedback-unread-badge">{{ messageUnreadCount > 99 ? '99+' : messageUnreadCount }}</span>
+          </span><span v-if="!sidebarCollapsed">通知中心</span>
         </button>
         <button v-if="canViewHelpDocuments" class="nav-item" :class="{ active: isActive('/help-documents'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/help-documents')" :title="sidebarCollapsed ? '帮助文档' : ''">
@@ -473,7 +479,10 @@
             </div>
           </div>
           <ScheduleTaskInbox v-if="!authState.mustChangePassword && (isSupervisor || scheduleTaskPendingCount > 0)" :key="authState.userId" :count="scheduleTaskPendingCount" :agenda="scheduleAgenda" @count="scheduleTaskPendingCount = $event" />
-          <button class="header-passkey-button" type="button" @click="go('/notifications')">通知</button>
+          <button class="header-notification-button" type="button" @click="go('/notifications')"
+            :aria-label="`通知中心，${messageUnreadCount}条未读`">通知
+            <span v-if="messageUnreadCount > 0" class="notification-unread-badge">{{ messageUnreadCount > 99 ? '99+' : messageUnreadCount }}</span>
+          </button>
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
@@ -784,6 +793,7 @@ const mobileMenuOpen = ref(false)
 const loginVersionModalOpen = ref(false)
 const sessionCheckIntervalMs = 60 * 1000
 const notificationRefreshIntervalMs = 60 * 1000
+const messageUnreadCount = ref(0)
 const notificationCacheTtlMs = 15 * 1000
 const notificationForceMinIntervalMs = 3000
 const serverResourceRefreshIntervalMs = 30 * 1000
@@ -1521,6 +1531,7 @@ const resetNotificationCounts = () => {
   scheduleTaskPendingCount.value = 0
   scheduleAgenda.value = null
   appealNotificationCount.value = 0
+  messageUnreadCount.value = 0
   notificationSummaryFetchedAt = 0
 }
 
@@ -1539,6 +1550,7 @@ const scheduleNotificationTrailingRefresh = () => {
 }
 
 const applyNotificationSummary = (payload = {}) => {
+  messageUnreadCount.value = Number(payload.message_unread_count || 0)
   certificateUnreadCount.value = Number(payload.certificate_unread_count || 0)
   feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
@@ -4316,6 +4328,20 @@ textarea:focus {
   cursor: pointer;
 }
 
+.header-notification-button {
+  position:relative; display:inline-flex; align-items:center; gap:7px; min-height:38px; padding:0 12px;
+  border:1px solid #bcd9d5; border-radius:12px; background:#eff8f6; color:#0f6861; font:inherit;
+  font-size:12px; font-weight:700; cursor:pointer;
+}
+.header-notification-button:hover { background:#dcefeb; border-color:#73aba3; }
+.mobile-notification-button { position:relative; flex-shrink:0; width:32px; height:34px; padding:0;
+  border:1px solid #bcd9d5; border-radius:10px; background:#eff8f6; color:#0f6861; font:inherit; font-weight:700; }
+.mobile-notification-button .notification-unread-badge { position:absolute; right:-6px; top:-6px; min-width:16px; height:16px; font-size:10px; padding:0 3px; }
+.notification-unread-badge {
+  display:inline-flex; align-items:center; justify-content:center; min-width:19px; height:19px;
+  padding:0 5px; border-radius:10px; background:#c93e46; color:#fff; font-size:11px;
+  font-weight:700; line-height:1; font-variant-numeric:tabular-nums;
+}
 .header-passkey-button {
   min-height: 38px;
   display: inline-flex;

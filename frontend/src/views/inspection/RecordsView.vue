@@ -737,6 +737,7 @@ const formatLocalDate = (value = new Date()) => {
 }
 
 const getDefaultDateRange = () => {
+  if ((localStorage.getItem('user_role') || localStorage.getItem('role')) === 'station_manager') return { dateFrom: '', dateTo: '' }
   const now = new Date()
   return {
     dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),

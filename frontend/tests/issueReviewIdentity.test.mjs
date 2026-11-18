@@ -10,7 +10,7 @@ for (const [file, start, end, variable] of [
 ]) {
   test(`${file}: reviewer is a configurable field immediately before review time`, () => {
     const source = read('views/inspection/' + file)
-    const columns = new Function(source.slice(source.indexOf(start), source.indexOf(end)) + '; return ' + variable)()
+    const columns = new Function('nonOilReviewColumns', source.slice(source.indexOf(start), source.indexOf(end)) + '; return ' + variable)([])
     const index = columns.findIndex(column => column.key === 'review_at')
     assert.equal(columns[index - 1].key, 'reviewer')
     assert.equal(columns[index - 1].label, '问题复核人员')

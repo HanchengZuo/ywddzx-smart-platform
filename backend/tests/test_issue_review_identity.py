@@ -9,11 +9,46 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 import app as api
-from issue_review_identity import attach_reviewers
+from issue_review_identity import attach_reviewers, attach_role_reviews, ROLE_REVIEW_KEYS, ROLE_REVIEW_COLUMNS
 from tests import test_issue_review_workflow as review_tests
 
 
 class ReviewIdentityTests(unittest.TestCase):
+    def test_other_roles_neither_fetch_nor_receive_role_review_fields(self):
+        for role in api.ROLE_OPTIONS:
+            if role=='non_oil': continue
+            cur=MagicMock()
+            row=dict(id=1)
+            attach_role_reviews(cur,[row],dict(role=role),api.ROLE_LABELS)
+            self.assertEqual(row,dict(id=1))
+            cur.execute.assert_not_called()
+
+    def test_role_review_xlsx_contains_three_sets_of_text_and_optional_photos(self):
+        from openpyxl import load_workbook
+        import tempfile
+        from pathlib import Path
+        from PIL import Image
+        stream=BytesIO()
+        row=dict(id=1,inspection_table_id=1,inspection_table_name='非油检查表')
+        row.update({key:'证据 '+key for key in ROLE_REVIEW_KEYS})
+        with tempfile.TemporaryDirectory() as directory:
+            for group,color in [('area','red'),('department','green'),('field','blue')]:
+                path=Path(directory)/(group+'.png')
+                Image.new('RGB',(20,20),color).save(path)
+                row[group+'_review_photo']=str(path)
+            options=api.normalize_issue_export_options(dict(include_fields=dict.fromkeys(ROLE_REVIEW_KEYS,True),
+                include_photos=dict.fromkeys(api.ISSUE_EXPORT_PHOTO_KEYS,True)))
+            with patch.object(api,'resolve_storage_abs_path',side_effect=lambda value:value):
+                api.write_issue_export_xlsx(stream,[row],options,{})
+            stream.seek(0)
+            book=load_workbook(stream)
+            try:
+                values=list(book.active.values)
+                self.assertEqual(values[0],tuple(label for label,_ in ROLE_REVIEW_COLUMNS))
+                for index,(_,key) in enumerate(ROLE_REVIEW_COLUMNS):
+                    if not key.endswith('_photo'): self.assertEqual(values[1][index],row[key])
+                self.assertEqual(len(book.active._images),3)
+            finally: book.close()
     def test_unreviewed_page_does_not_read_history_or_keep_stale_identity(self):
         cur=MagicMock()
         rows=[dict(id=1,review_at=None,reviewer='过期身份')]
@@ -83,6 +118,25 @@ class ReviewIdentityDatabaseTests(unittest.TestCase):
     def connect(self):
         return psycopg2.connect(**self.config,cursor_factory=RealDictCursor,
             options=f'-c search_path={self.schema} -c timezone=Asia/Shanghai')
+
+    def test_role_evidence_reads_latest_per_role_without_losing_earlier_actors(self):
+        for role,result,note in [('area_non_oil','整改通过','片区意见'),('supervisor','整改不通过','现场意见'),
+                                 ('non_oil','整改不通过','终审意见'),('supervisor_manager','整改通过','现场新意见')]:
+            api.record_issue_workflow_event(self.cur,42,dict(id=17,role=role,real_name=role),
+                'review_submitted','待复核','待复核',result,note,'rectifications/'+role+'.png')
+        self.cur.execute("UPDATE users SET real_name='后来改名',role='finance' WHERE id=17")
+        row=attach_role_reviews(self.cur,[dict(id=42)],dict(role='non_oil'),api.ROLE_LABELS)[0]
+        self.assertEqual(row['area_review_note'],'片区意见')
+        self.assertEqual(row['department_review_note'],'终审意见')
+        self.assertEqual(row['field_review_note'],'现场新意见')
+        self.assertEqual(row['field_review_photo'],'rectifications/supervisor_manager.png')
+        self.assertNotIn('后来改名',row['field_review_reviewer'])
+        self.assertEqual(row['review_note'],'现场新意见')
+        api.record_issue_workflow_event(self.cur,42,dict(id=17,role='station_manager'),
+            'rectification_submitted','待整改','待复核','已整改','新一轮整改')
+        next_round=attach_role_reviews(self.cur,[dict(id=42)],dict(role='non_oil'),api.ROLE_LABELS)[0]
+        self.assertNotIn('review_result',next_round)
+        self.assertEqual(next_round['field_review_note'],'现场新意见')
 
     def submit(self, result='整改不通过'):
         with ExitStack() as stack:

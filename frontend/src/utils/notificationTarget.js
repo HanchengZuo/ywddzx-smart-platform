@@ -12,7 +12,8 @@ export function notificationTarget(value) {
 
 export function businessNotificationPath(item) {
   if (item.kind !== 'business') return ''
-  if (item.source === 'quality_review_handoff' && item.action_path === '/inspection/my-reviews') {
+  if (['quality_review_handoff', 'non_oil_review'].includes(item.source) &&
+      ['/inspection/my-reviews', '/inspection/my-rectifications'].includes(item.action_path)) {
     const id = String(item.entity_id ?? '')
     return /^[1-9][0-9]{0,9}$/.test(id) ? { path: item.action_path, query: { issue_id: id } } : ''
   }

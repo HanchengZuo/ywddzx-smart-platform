@@ -19,7 +19,7 @@ class IssueExportAccessTests(unittest.TestCase):
         self.assertEqual(core_app.normalize_permission_updates({key: False, 'view_own_inspection_issues': True}),
                          {'view_own_inspection_issues': True})
 
-    def create(self, role='station_manager', visible_ids=(11, 12), filtered=False, photos=True):
+    def create(self, role='station_manager', visible_ids=(11, 12), filtered=False, photos=True, role_fields=False):
         user = dict(id=17, username='test-account', role=role, station_id=3)
         conn, cur = MagicMock(), MagicMock()
         conn.cursor.return_value = cur
@@ -28,6 +28,8 @@ class IssueExportAccessTests(unittest.TestCase):
             'include_fields': dict(id=True, issue_photo=photos, rectification_photo=photos, review_photo=photos),
             'include_photos': dict.fromkeys(core_app.ISSUE_EXPORT_PHOTO_KEYS, photos),
         })
+        if role_fields:
+            data['export_options']['include_fields'].update(dict.fromkeys(core_app.ROLE_REVIEW_KEYS, True))
         if filtered:
             data['filter_query'] = {'region': '浦东'}
         with ExitStack() as stack:
@@ -58,9 +60,18 @@ class IssueExportAccessTests(unittest.TestCase):
                 rows.assert_called_once_with(cur, user, [11, 12])
                 start.assert_called_once()
                 options = start.call_args.args[3]
-                self.assertTrue(all(options['include_photos'][key] for key in core_app.ISSUE_EXPORT_PHOTO_KEYS))
+                self.assertTrue(all(options['include_photos'][key] for key in ('issue_photo','rectification_photo','review_photo')))
                 self.assertEqual(options['photo_mode'], 'compatible')
                 conn.commit.assert_called_once()
+
+    def test_only_non_oil_can_request_role_review_fields_and_photos(self):
+        for role in core_app.ROLE_OPTIONS:
+            _,status,_,_,start,*_=self.create(role=role,role_fields=True)
+            self.assertEqual(status,200)
+            options=start.call_args.args[3]
+            self.assertEqual(all(options['include_fields'][key] for key in core_app.ROLE_REVIEW_KEYS), role=='non_oil')
+            for key in ('area_review_photo','department_review_photo','field_review_photo'):
+                self.assertEqual(options['include_photos'][key],role=='non_oil')
 
     def test_text_only_remains_a_user_choice_not_a_permission(self):
         _, status, _, _, start, *_ = self.create(photos=False)

@@ -96,6 +96,16 @@
             </div>
             <div class="mobile-card-row"><span>问题复核人员</span><strong>{{ item.reviewer || '暂无' }}</strong></div>
             <div class="mobile-card-row"><span>问题复核时间</span><strong>{{ item.review_at || '暂无' }}</strong></div>
+            <section v-for="group in nonOilReviewGroups" :key="group.key" class="role-review-card">
+              <h4>{{ group.label }}最近一次问题复核</h4>
+              <p>{{ item[group.key + '_review_result'] || '暂无复核记录' }}</p>
+              <p>{{ item[group.key + '_review_note'] || '未填写说明' }}</p>
+              <small>{{ item[group.key + '_review_reviewer'] }} · {{ item[group.key + '_review_at'] }}</small>
+              <button v-if="item[group.key + '_review_photo']" class="image-btn" type="button"
+                @click="preview(resolveImage(item[group.key + '_review_photo']), group.label + '问题复核照片')">
+                <img class="thumb" :src="resolveImage(item[group.key + '_review_photo'])" :alt="group.label + '问题复核照片'" loading="lazy" />
+              </button>
+            </section>
           </div>
 
           <div class="mobile-card-images">
@@ -580,6 +590,9 @@
                 <th v-if="isIssueColumnVisible('reviewer')" class="nowrap">问题复核人员</th>
                 <th v-if="isIssueColumnVisible('review_at')" class="nowrap">问题复核时间</th>
                 <th v-if="isIssueColumnVisible('review_photo')" class="nowrap">问题复核照片</th>
+                <template v-for="column in nonOilReviewColumns" :key="column.key">
+                  <th v-if="isIssueColumnVisible(column.key)" class="nowrap role-review-heading">{{ column.label }}</th>
+                </template>
                 <th v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">问题状态</th>
                 <th v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">审核</th>
                 <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
@@ -658,6 +671,18 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
+                <template v-for="column in nonOilReviewColumns" :key="column.key">
+                  <td v-if="isIssueColumnVisible(column.key)" :class="column.photo ? 'nowrap' : 'role-review-cell'">
+                    <template v-if="column.photo">
+                      <button v-if="item[column.key]" class="image-btn" type="button" @click="preview(resolveImage(item[column.key]), column.label)">
+                        <img v-if="listImagesReady" :src="resolveImage(item[column.key])" class="thumb" :alt="column.label" loading="lazy" />
+                        <span v-else class="thumb-placeholder">复核照片</span>
+                      </button>
+                      <span v-else>暂无</span>
+                    </template>
+                    <template v-else>{{ item[column.key] || '暂无' }}</template>
+                  </td>
+                </template>
                 <td v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                   <button class="issue-flow-history-trigger" type="button" @click="openIssueFlowHistory(item)">
@@ -1348,8 +1373,10 @@ import {
 import DateRangePicker from '@/components/DateRangePicker.vue'
 import { descriptionFilterError } from '@/utils/issueDescriptionFilter'
 import { issueExportFilterChips, beginIssueExportDownload } from '@/utils/issueExport'
+import { roleReviewColumns, roleReviewGroups } from '@/utils/roleReviewColumns'
 
 const currentMonthValue = () => {
+  if ((localStorage.getItem('user_role') || localStorage.getItem('role')) === 'station_manager') return ''
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
@@ -1490,6 +1517,8 @@ let fullscreenDomMutationTimer = null
 let rememberedFullscreenZoom = null
 const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
+const nonOilReviewColumns = currentRole === 'non_oil' ? roleReviewColumns : []
+const nonOilReviewGroups = currentRole === 'non_oil' ? roleReviewGroups : []
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
 const parsedPermissions = (() => {
@@ -1530,6 +1559,7 @@ const issueColumnDefinitions = [
   { key: 'reviewer', label: '问题复核人员', group: '整改复核', width: 190 },
   { key: 'review_at', label: '问题复核时间', group: '整改复核', width: 148 },
   { key: 'review_photo', label: '问题复核照片', group: '整改复核', width: 120 },
+  ...nonOilReviewColumns,
   { key: 'status', label: '问题状态', group: '状态操作', width: 104 },
   { key: 'audit', label: '审核', group: '状态操作', width: 116 },
   { key: 'excellent', label: '优秀', group: '状态操作', width: 78 }
@@ -1694,8 +1724,13 @@ const exportFieldGroups = [
     ]
   }
 ]
+for (const group of nonOilReviewGroups) {
+  exportFieldGroups.push({ title: group.label + '最近一次复核', options: nonOilReviewColumns
+    .filter(column => column.key.startsWith(group.key + '_'))
+    .map(column => ({ ...column, help: column.photo ? '嵌入对应环节的复核照片' : '该角色最近一次提交的复核信息' })) })
+}
 const exportFieldOptions = exportFieldGroups.flatMap((group) => group.options)
-const exportPhotoFieldKeys = ['issue_photo', 'rectification_photo', 'review_photo']
+const exportPhotoFieldKeys = ['issue_photo', 'rectification_photo', 'review_photo', ...nonOilReviewColumns.filter(c => c.photo).map(c => c.key)]
 
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const uniqueSortedOptions = (values) => {
@@ -3771,6 +3806,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.role-review-cell { white-space:normal; overflow-wrap:anywhere; line-height:1.6; color:#294b62; }
+.role-review-heading { color:#174e64; box-shadow:inset 0 3px #288596; }
+.role-review-card { padding:12px; margin-top:10px; border:1px solid #cbdde4; border-radius:10px; background:#f3f8fa; }
+.role-review-card h4 { margin:0 0 8px; font-size:13px; color:#175d71; }
+.role-review-card p { margin:5px 0; font-size:13px; line-height:1.6; }
+.role-review-card small { display:block; color:#526e80; }
 .page-shell {
   display: flex;
   flex-direction: column;

@@ -8,7 +8,11 @@ export const reviewOptionLabel = (value, stationResult) => value === '整改通�
   ? '整改通过（问题状态变更为已闭环）' : value
 export const reviewAllowsPhoto = result => ['整改通过', '整改不通过', '通过站级无法整改', '驳回站级无法整改'].includes(result)
 
-export const rectificationReturnKind = item => item?.appeal_rejected ? 'appeal' : isReviewReturned(item?.review_result) ? 'review' : ''
+export const rectificationReturnKind = item => {
+  // A preliminary negative opinion is not a station return until routing finishes.
+  if (item?.non_oil_review_stage && item?.status === '待复核') return ''
+  return item?.appeal_rejected ? 'appeal' : isReviewReturned(item?.review_result) ? 'review' : ''
+}
 
 export const rectificationReturnNotices = items => {
   const counts = { appeal: 0, review: 0 }

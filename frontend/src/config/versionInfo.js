@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.6', date: '2026-11-18', title: '非油复核流转与三方证据',
+    summary: '盛大意见统一回部门终审，驳回经片区退站；非油视角可查看并导出三方复核记录。',
+    items: ['站点问题列表与巡检记录默认不限月份。', '非油复核各环节独立留痕、按权限发送办理通知，通知入口显示未读角标。'] },
   { version: 'v13.5', date: '2026-11-18', title: '档期快捷设置与排班筛选',
     summary: '人员档期可单击切换空闲状态，巡检排班支持按单元格颜色及人员搜索。',
     items: ['快捷模式自动保存今天及未来未分组、未派工的空闲状态，保留权限、实绩锁定与冲突校验。', '现场、计量现场、视频排班按颜色和姓名或用户名组合筛选，匹配项标记，保留整站信息。'] },

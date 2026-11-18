@@ -21,12 +21,12 @@
           <div class="scope-checklists" aria-label="督导中心复核覆盖部门">
             <span>质安部</span><span>非油事业部 · 现场转交</span>
           </div>
-          <p>质安问题可转交质安部；非油问题仅接收非油事业部转来的现场复核。</p>
+          <p>质安问题可转交质安部；非油现场复核的所有意见均返回非油事业部终审。</p>
         </template>
         <template v-else>
           <p v-if="accountRole === 'quality_safety'">仅显示督导中心转交给质安部的待复核问题。</p>
           <p v-if="accountRole === 'non_oil'">默认仅显示可由非油事业部终审的问题；等待片区或盛大现场复核的事项可切换查看。</p>
-          <p v-if="areaReviewRoles.includes(accountRole)">仅复核本片区的非油检查问题。通过后交非油事业部终审，驳回直接退回站点。</p>
+          <p v-if="areaReviewRoles.includes(accountRole)">仅处理本片区非油问题。初审通过交非油事业部终审，初审驳回退站；部门驳回的事项由片区确认退回站点。</p>
           <details v-if="scopeTables.length" class="review-scope-details">
             <summary>查看适用检查表（{{ scopeTables.length }}）</summary>
             <div class="scope-checklists" aria-label="当前复核视角检查表">
@@ -567,6 +567,7 @@
         <div class="drawer-content" v-if="actionDrawer.item">
           <div v-if="actionDrawer.item.non_oil_review_stage" class="review-handoff-note">
             <strong>{{ nonOilStageLabel(actionDrawer.item) }}</strong>
+            <span v-if="actionDrawer.item.non_oil_review_stage === 'area_return'">终审结论：{{ actionDrawer.item.review_result }} · {{ actionDrawer.item.review_note || '未填写说明' }}。请向站点传达并退回整改。</span>
             <span v-if="reviewIsReadOnly(actionDrawer.item)">当前仅可查看整改材料和流转记录。</span>
             <span>整改结果：{{ rectificationResultLabel(actionDrawer.item.rectification_result) }} · {{ actionDrawer.item.rectification_at || '时间未记录' }}</span>
             <span>整改说明：{{ actionDrawer.item.rectification_note || '未填写' }}</span>
@@ -660,7 +661,7 @@
               <label>问题复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
-                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ isNonOilPreliminary(actionDrawer.item) ? result : reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
+                <option v-for="result in availableReviewOptions(actionDrawer.item)" :key="result" :value="result">{{ actionDrawer.item.non_oil_review_stage ? result : reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
               </select>
             </div>
 
@@ -807,11 +808,15 @@ try { queuePermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
 const canSubmitQueue = computed(() => canSubmitIssueQueue(accountRole, queuePermissions, props.queue))
 const reviewIsReadOnly = item => Boolean(item?.non_oil_review_stage && (!item.review_can_act || !canSubmitQueue.value))
 const isNonOilPreliminary = item => ['area', 'field'].includes(item?.non_oil_review_stage)
+const availableReviewOptions = item => reviewOptionsFor(item.rectification_result)
+  .filter(result => item.non_oil_review_stage !== 'area_return' || isReviewReturned(result))
 const nonOilStageLabel = item => ({
   area: '等待片区复核', department: '等待非油事业部终审', field: '等待盛大现场复核',
+  area_return: '非油事业部已驳回 · 待片区退回站点',
 })[item?.non_oil_review_stage] || ''
 const reviewActionText = item => reviewIsReadOnly(item) ? '查看整改与流转' : ({
   area: '提交片区复核', department: '提交终审', field: '提交现场复核',
+  area_return: '退回站点整改',
 })[item?.non_oil_review_stage] || '提交复核'
 const queueScopeLabel = computed(() => props.queue === 'rectification' ? '本站待整改' : reviewQueuePerspective(accountRole))
 const myIssuesEmptyTitle = computed(() => isNonOilDepartmentQueue.value ? `没有符合条件的「${nonOilQueueTitle.value}」事项`
@@ -1282,8 +1287,12 @@ const actionForm = ref({
 const shouldShowRectificationPhotoUpload = computed(() => actionForm.value.rectificationResult === '已整改')
 const shouldShowReviewPhotoUpload = computed(() => reviewAllowsPhoto(actionForm.value.reviewResult))
 const reviewOutcomeHint = computed(() => {
-  if (actionForm.value.reviewResult && !isReviewReturned(actionForm.value.reviewResult) && isNonOilPreliminary(actionDrawer.value.item)) {
+  const stage = actionDrawer.value.item?.non_oil_review_stage
+  if (actionForm.value.reviewResult && (stage === 'field' || (!isReviewReturned(actionForm.value.reviewResult) && isNonOilPreliminary(actionDrawer.value.item)))) {
     return { type: 'closed', title: '交非油事业部终审', description: '本轮意见将独立留痕，问题仍为待复核，最终结论由非油事业部提交。' }
+  }
+  if (actionForm.value.reviewResult && stage === 'department' && isReviewReturned(actionForm.value.reviewResult)) {
+    return { type: 'returned', title: '交所属片区退回站点', description: '本次驳回先流转至片区，仍为待复核；片区确认退回后，站点才会收到重新整改任务。' }
   }
   if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。问题复核照片选填。' }
   if (isReviewReturned(actionForm.value.reviewResult)) {
@@ -1503,8 +1512,8 @@ const openActionDrawer = (item) => {
   actionMessage.value = ''
   actionForm.value = {
     ...rectificationDraftFor(item, resolveImage),
-    reviewResult: '',
-    reviewNote: item.review_note || '',
+    reviewResult: item.non_oil_review_stage === 'area_return' ? item.review_result : '',
+    reviewNote: item.non_oil_review_stage ? '' : item.review_note || '',
     reviewPhotoFile: null
   }
   if (currentRole.value !== 'station_manager') fetchIssueFlowHistory(item.id)

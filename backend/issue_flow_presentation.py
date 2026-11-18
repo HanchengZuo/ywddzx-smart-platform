@@ -67,8 +67,11 @@ def flow_event_presentation(event):
             'non_oil_area_review_passed': ('片区复核', '非油事业部终审'),
             'non_oil_field_review_requested': ('非油事业部终审', '盛大现场复核'),
             'non_oil_field_review_passed': ('盛大现场复核', '非油事业部终审'),
+            'non_oil_field_review_returned': ('盛大现场复核', '非油事业部终审'),
+            'non_oil_department_returned': ('非油事业部终审', '片区待退回站点'),
+            'non_oil_area_returned_to_station': ('片区待退回站点', '站点重新整改'),
         }[kind]
-        event.update(stage_label='非油问题复核', tone='info', from_label=source, to_label=destination)
+        event.update(stage_label='非油问题复核', tone='returned' if 'returned' in kind else 'info', from_label=source, to_label=destination)
     elif kind in ('rectification_submitted', 'review_submitted'):
         event['stage_label'] = '问题复核' if kind == 'review_submitted' else '站点整改'
         event['tone'] = 'returned' if result in ('整改不通过', '驳回站级无法整改') else 'success' if kind == 'review_submitted' else 'info'

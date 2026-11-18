@@ -21,7 +21,7 @@ test('new exports select all three photo fields but preserve hidden contacts and
   const source = readSource('views/inspection/IssuesView.vue')
   assert.match(
     source,
-    /const exportPhotoFieldKeys = \['issue_photo', 'rectification_photo', 'review_photo'\]/,
+    /const exportPhotoFieldKeys = \['issue_photo', 'rectification_photo', 'review_photo', \.\.\.nonOilReviewColumns/,
   )
   assert.match(
     source,

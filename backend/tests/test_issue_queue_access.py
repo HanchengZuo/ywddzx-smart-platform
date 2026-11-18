@@ -186,6 +186,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
             self.stack.enter_context(patch.object(api,name,return_value=False))
         self.stack.enter_context(patch.object(api,'normalize_issue_row_for_response',side_effect=lambda row,*_,**kwargs:dict(row)))
         self.saved=self.stack.enter_context(patch.object(api,'save_uploaded_file',return_value='rectifications/test.jpg'))
+        self.notifications=self.stack.enter_context(patch.object(api,'notify_non_oil_stage'))
 
     def role(self,role):
         self.user['role']=role
@@ -258,7 +259,9 @@ class QueueScopeDatabaseTests(unittest.TestCase):
         body,status=self.non_oil_review(row['non_oil_review_token'])
         self.assertEqual((status,body['status']),(200,'待复核'))
         self.cur.execute('SELECT review_result,review_at FROM issues WHERE id=48')
-        self.assertEqual(self.cur.fetchone(),dict(review_result=None,review_at=None))
+        latest=self.cur.fetchone()
+        self.assertEqual(latest['review_result'],'整改通过')
+        self.assertIsNotNone(latest['review_at'])
         self.role('non_oil')
         self.assertEqual(self.non_oil_review(first_department_token)[1],409)
         body,status=self.non_oil_review(self.non_oil_row()['non_oil_review_token'])
@@ -270,7 +273,7 @@ class QueueScopeDatabaseTests(unittest.TestCase):
             ('non_oil_area_review_passed','area_non_oil',1), ('non_oil_field_review_requested','non_oil',1),
             ('non_oil_field_review_passed','supervisor',1), ('review_submitted','non_oil',1)])
 
-    def test_non_oil_unable_passes_are_preliminary_and_all_rejections_return_to_station(self):
+    def test_non_oil_unable_rejections_follow_stage_specific_routes(self):
         for stage in ('area','department','field'):
             with self.subTest(stage=stage):
                 self.cur.execute("UPDATE issues SET status='待整改' WHERE id=48")
@@ -300,9 +303,60 @@ class QueueScopeDatabaseTests(unittest.TestCase):
                     self.role('supervisor_manager')
                     token=self.non_oil_row()['non_oil_review_token']
                 body,status=self.non_oil_review(token,'驳回站级无法整改')
+                if stage == 'field':
+                    self.assertEqual((status,body['status'],body['returned_to_station']),(200,'待复核',False))
+                    self.role('non_oil')
+                    body,status=self.non_oil_review(self.non_oil_row()['non_oil_review_token'],'驳回站级无法整改')
+                if stage in ('department','field'):
+                    self.assertEqual((status,body['status'],body['returned_to_station']),(200,'待复核',False))
+                    self.assertEqual(self.non_oil_row('area')['non_oil_review_stage'],'area_return')
+                    self.role('area_non_oil')
+                    token=self.non_oil_row()['non_oil_review_token']
+                    self.assertEqual(self.non_oil_review(token,'整改通过')[1],409)
+                    body,status=self.non_oil_review(token,'驳回站级无法整改')
                 self.assertEqual((status,body['status'],body['returned_to_station']),(200,'待整改',True))
                 self.cur.execute('SELECT non_oil_review_stage,review_result FROM issues WHERE id=48')
                 self.assertEqual(self.cur.fetchone(),dict(non_oil_review_stage=None,review_result='驳回站级无法整改'))
+
+    def test_field_every_result_returns_to_department_and_department_rejects_via_area(self):
+        for station_result, results in [('已整改', ('整改通过','整改不通过')),
+                                        ('站级无法整改', ('整改通过','通过站级无法整改','驳回站级无法整改'))]:
+            for result in results:
+                with self.subTest(result=result,station=station_result):
+                    self.cur.execute("UPDATE issues SET status='待复核',rectification_result=%s WHERE id=48", (station_result,))
+                    self.cur.execute("UPDATE issues SET non_oil_review_stage='field',non_oil_review_event_id=0 WHERE id=48")
+                    self.admin.commit()
+                    self.role('supervisor')
+                    body,status=self.non_oil_review('0',result)
+                    self.assertEqual((status,body['status'],body['returned_to_station']),(200,'待复核',False))
+                    self.assertIsNone(self.non_oil_row())
+                    self.role('non_oil')
+                    row=self.non_oil_row()
+                    self.assertEqual(row['review_result'],result)
+                    body,status=self.non_oil_review(row['non_oil_review_token'],result)
+                    rejected=result in ('整改不通过','驳回站级无法整改')
+                    self.assertEqual(body['status'],'待复核' if rejected else '已闭环' if result=='整改通过' else '站级无法整改')
+                    self.assertEqual(status,200)
+                    if rejected:
+                        self.role('area_account')
+                        self.regions={'片区乙'}
+                        self.assertIsNone(self.non_oil_row())
+                        self.regions={'片区甲'}
+                        row=self.non_oil_row()
+                        self.assertEqual(row['non_oil_review_stage'],'area_return')
+                        self.assertEqual(self.non_oil_review(row['non_oil_review_token'],'整改通过')[1],409)
+                        self.assertEqual(self.non_oil_review(row['non_oil_review_token'],result)[0]['status'],'待整改')
+        self.assertIn('area_return',[call.args[3] for call in self.notifications.call_args_list])
+        self.assertIn('station',[call.args[3] for call in self.notifications.call_args_list])
+
+    def test_notification_failure_rolls_back_review_and_stage(self):
+        self.role('area_account')
+        self.notifications.side_effect=RuntimeError('outbox unavailable')
+        self.assertEqual(self.non_oil_review()[1],500)
+        self.cur.execute('SELECT non_oil_review_stage,review_result FROM issues WHERE id=48')
+        self.assertEqual(self.cur.fetchone(),dict(non_oil_review_stage=None,review_result=None))
+        self.cur.execute('SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=48')
+        self.assertEqual(self.cur.fetchone()['n'],0)
 
     def test_non_oil_history_and_stage_roll_back_together(self):
         self.role('area_account')

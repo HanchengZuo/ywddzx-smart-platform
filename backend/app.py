@@ -2,7 +2,7 @@ from flask import Flask, abort, g, has_request_context, jsonify, request, send_f
 from flask_cors import CORS
 from frontend_version import development_frontend_version
 from roles import PRIVILEGED_ROLES, is_supervisor_role
-from issue_review_identity import actor_department, attach_reviewers
+from issue_review_identity import actor_department, attach_reviewers, attach_role_reviews, ROLE_REVIEW_KEYS, ROLE_REVIEW_COLUMNS
 from user_permission_config import merge_personal_permissions, replace_personal_permissions
 from driving_permits import permit_value, save_user_permit
 from upload_request import PlatformRequest
@@ -6475,7 +6475,7 @@ def review_queue_scope(cur, user, *, actionable=False):
     if role == "quality_safety":
         scope += " AND i.quality_review_handoff_id IS NOT NULL"
     elif role in non_oil_review.AREA_REVIEW_ROLES:
-        scope += """ AND COALESCE(i.non_oil_review_stage, 'area') = 'area'
+        scope += """ AND COALESCE(i.non_oil_review_stage, 'area') IN ('area', 'area_return')
                      AND i.audit_status = 'approved'
                      AND EXISTS (SELECT 1 FROM stations sr WHERE sr.id=i.station_id
                      AND COALESCE(NULLIF(TRIM(sr.region), ''), '未填写片区')=ANY(%s))"""
@@ -6498,7 +6498,7 @@ def issue_in_review_queue_scope(cur, user, issue):
     if issue.get("inspection_table_id") not in ids:
         return False
     if user["role"] in non_oil_review.AREA_REVIEW_ROLES:
-        return (non_oil_review.stage_for(issue) == "area"
+        return (non_oil_review.stage_for(issue) in ("area", "area_return")
                 and normalize_station_region_value(issue.get("station_region")) in non_oil_area_review_regions(cur, user))
     if user["role"] == "quality_safety":
         return bool(issue.get("quality_review_handoff_id"))
@@ -6644,6 +6644,11 @@ def record_issue_workflow_event(
         ),
     )
     return cur.fetchone()["id"]
+
+
+def notify_non_oil_stage(cur, issue_id, event_id, stage):
+    from non_oil_notifications import notify_stage
+    notify_stage(cur, issue_id, event_id, stage, globals())
 
 
 def issue_created_by_user(user, issue):
@@ -6872,7 +6877,7 @@ def fetch_issue_row_for_response(
     row = cur.fetchone()
     if not row:
         return None
-    attach_internal_standard_tags_to_issue_rows(cur, [row])
+    attach_internal_standard_tags_to_issue_rows(cur, [row], user)
     return normalize_issue_row_for_response(
         row,
         user,
@@ -7033,6 +7038,7 @@ ISSUE_EXPORT_PHOTO_KEYS = {
     "issue_photo",
     "rectification_photo",
     "review_photo",
+    "area_review_photo", "department_review_photo", "field_review_photo",
 }
 
 ISSUE_EXPORT_PHOTO_MODES = {
@@ -7068,7 +7074,7 @@ ISSUE_EXPORT_FIELD_KEYS = {
     "review_at",
     "review_photo",
     "status",
-}
+} | ROLE_REVIEW_KEYS
 
 
 def normalize_issue_export_options(raw_options):
@@ -7080,7 +7086,7 @@ def normalize_issue_export_options(raw_options):
         key: bool(raw_include_fields.get(key))
         for key in ISSUE_EXPORT_FIELD_KEYS
     } if has_explicit_fields else {
-        key: True
+        key: key not in ROLE_REVIEW_KEYS
         for key in ISSUE_EXPORT_FIELD_KEYS
     }
 
@@ -7108,6 +7114,15 @@ def selected_issue_export_field_keys(export_options):
         for key in ISSUE_EXPORT_FIELD_KEYS
         if bool(include_fields.get(key))
     }
+
+
+def restrict_role_review_export(export_options, user):
+    if user.get('role') != 'non_oil':
+        for key in ROLE_REVIEW_KEYS:
+            export_options['include_fields'][key] = False
+            if key.endswith('_photo'):
+                export_options['include_photos'][key] = False
+    return export_options
 
 
 def get_issue_export_task_for_user(cur, task_id, user):
@@ -7275,7 +7290,7 @@ def fetch_issue_export_rows(cur, user, issue_ids, enforce_user_scope=True):
         params,
     )
     rows = cur.fetchall()
-    attach_internal_standard_tags_to_issue_rows(cur, rows)
+    attach_internal_standard_tags_to_issue_rows(cur, rows, user)
     for row in rows:
         row["standard_tags"] = "；".join(
             f"{tag.get('group_name') or ''}：{tag.get('tag_name') or ''}".strip("：")
@@ -7331,7 +7346,7 @@ ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("问题复核时间", "review_at"),
     ("问题复核照片", "review_photo"),
     ("问题状态", "status"),
-]
+] + ROLE_REVIEW_COLUMNS
 
 ISSUE_EXPORT_LONG_TEXT_KEYS = {
     "internal_standard_detail_text",
@@ -7339,6 +7354,7 @@ ISSUE_EXPORT_LONG_TEXT_KEYS = {
     "description",
     "rectification_note",
     "review_note",
+    "area_review_note", "department_review_note", "field_review_note",
 }
 
 
@@ -12158,6 +12174,8 @@ def classify_non_oil_rectification(row):
     status = str(row.get("status") or "").strip()
     rectification_result = str(row.get("rectification_result") or "").strip()
     review_result = str(row.get("review_result") or "").strip()
+    if status == '待复核':
+        return 'pending_acceptance'
     if (
         status in {"已闭环", "已整改", "站经无法整改", "站级无法整改"}
         or review_result in {"已整改", "整改通过", "通过站级无法整改"}
@@ -13115,6 +13133,7 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
         user = get_user_by_id(cur, user_id)
         if not user:
             raise ValueError("导出用户不存在。")
+        restrict_role_review_export(export_options, user)
         rows = fetch_issue_export_rows(cur, user, issue_ids)
         if len({row['id'] for row in rows}) != len(set(issue_ids)):
             raise PermissionError("导出数据权限或问题记录已变化，请重新筛选后导出。")
@@ -15795,6 +15814,8 @@ def get_notification_summary():
             cur, current_user, get_effective_permissions(cur, current_user),
             certificate_regions(cur, current_user), CERTIFICATE_TYPES,
         )
+        cur.execute('SELECT count(*) AS n FROM web_push_recipients WHERE user_id=%s AND read_at IS NULL', (current_user['id'],))
+        message_unread_count = int(cur.fetchone()['n'])
         conn.commit()
         return jsonify(
             {
@@ -15807,6 +15828,7 @@ def get_notification_summary():
                 "schedule_task_pending_count": schedule_task_pending_count,
                 "schedule_agenda": schedule_agenda,
                 "certificate_unread_count": certificate_count,
+                "message_unread_count": message_unread_count,
             }
         )
     except Exception as e:
@@ -16745,10 +16767,12 @@ def fetch_internal_standard_tags_by_codes(cur, internal_standard_ids):
     return result
 
 
-def attach_internal_standard_tags_to_issue_rows(cur, rows):
+def attach_internal_standard_tags_to_issue_rows(cur, rows, user=None):
     if not rows:
         return rows
     attach_reviewers(cur, rows, ROLE_LABELS)
+    if user:
+        attach_role_reviews(cur, rows, user, ROLE_LABELS)
     checklist_editions.attach_rows(cur, rows)
     tag_map = fetch_internal_standard_tags_by_codes(
         cur,
@@ -26335,7 +26359,7 @@ def get_my_issues():
             waiting_counts = {}
             if user["role"] == "non_oil":
                 cur.execute(f"""
-                    SELECT COUNT(*) FILTER (WHERE COALESCE(i.non_oil_review_stage, 'area') = 'area') AS area,
+                    SELECT COUNT(*) FILTER (WHERE COALESCE(i.non_oil_review_stage, 'area') IN ('area', 'area_return')) AS area,
                            COUNT(*) FILTER (WHERE i.non_oil_review_stage = 'field') AS field
                     FROM issues i WHERE {PENDING_REVIEW_WHERE} AND i.audit_status = 'approved' AND {scope}
                 """, scope_params)
@@ -27085,7 +27109,7 @@ def get_issues():
             query_params,
         )
         rows = cur.fetchall()
-        attach_internal_standard_tags_to_issue_rows(cur, rows)
+        attach_internal_standard_tags_to_issue_rows(cur, rows, user)
         conn.commit()
         items = [
             normalize_issue_row_for_response(
@@ -30590,6 +30614,7 @@ def create_issue_export_task():
             issue_ids = fetch_issue_list_ids(cur, user, filter_query)
             if not issue_ids:
                 raise ValueError("当前筛选结果为空，不能导出。")
+        restrict_role_review_export(export_options, user)
         if not selected_issue_export_field_keys(export_options):
             raise ValueError("请至少选择一个导出字段。")
         visible_issue_rows = fetch_issue_export_rows(cur, user, issue_ids)
@@ -30733,6 +30758,8 @@ def require_issue_export_download_access(cur, task, user):
         if {row['id'] for row in cur.fetchall()} != set(ids):
             raise PermissionError('当前账号的数据权限或问题记录已变化，请重新筛选后导出。')
         fields = (task.get('export_options') or {}).get('include_fields') or {}
+        if user.get('role') != 'non_oil' and any(fields.get(key) for key in ROLE_REVIEW_KEYS):
+            raise PermissionError('当前角色不能下载含三方复核信息的文件，请重新导出。')
         if (fields.get('inspector') or fields.get('inspector_phone')) and should_hide_inspector_contact_info(cur, user):
             raise PermissionError('当前账号不能下载含检查人信息的历史文件，请重新导出。')
     path = resolve_storage_abs_path(task.get('file_path'))
@@ -31942,7 +31969,7 @@ def export_management_auto_audit_history():
         write_issue_export_xlsx(
             output,
             export_rows,
-            export_options,
+            restrict_role_review_export(export_options, user),
             table_field_map,
             extra_columns=AUTO_AUDIT_EXPORT_COLUMNS,
             workbook_title="白名单自动审核回溯导出",
@@ -34000,6 +34027,7 @@ def submit_rectification(issue_id):
         non_oil = is_non_oil_review_table(issue)
         if non_oil:
             non_oil_review.advance(cur, issue_id, "area", event_id)
+            notify_non_oil_stage(cur, issue_id, event_id, 'area')
         conn.commit()
         message = "整改提交成功，已转所属片区复核，非油事业部可同步查看。" if non_oil else "整改提交成功，已转入待复核。"
         return jsonify({"success": True, "message": message})
@@ -34092,6 +34120,7 @@ def transfer_non_oil_review_to_field(issue_id):
             cur, issue_id, user, "non_oil_field_review_requested", "待复核", "待复核", None, reason.strip()
         )
         non_oil_review.advance(cur, issue_id, "field", event_id)
+        notify_non_oil_stage(cur, issue_id, event_id, 'field')
         conn.commit()
         return jsonify(success=True, message="已转交盛大（督导中心）现场复核；非油事业部仍可查看。")
     except Exception:
@@ -34200,21 +34229,27 @@ def submit_review(issue_id):
         except ValueError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
         review_result = transition["review_result"]
+        if non_oil_stage == 'area_return' and not transition['returns_to_station']:
+            return jsonify(success=False, error='非油事业部已驳回，请将问题退回站点整改，不能更改终审结论。'), 409
         new_status = transition["new_status"]
         # All review outcomes accept optional evidence; rectification rules are separate.
         review_photo_path = None
         if transition["photo_allowed"] and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
-        if non_oil_stage in {"area", "field"} and not transition["returns_to_station"]:
-            action = "non_oil_area_review_passed" if non_oil_stage == "area" else "non_oil_field_review_passed"
+        next_stage, action = non_oil_review.review_route(non_oil_stage, transition['returns_to_station'])
+        if next_stage:
+            cur.execute("""UPDATE issues SET review_result=%s,review_note=%s,review_at=CURRENT_TIMESTAMP,
+                           review_photo_path=%s WHERE id=%s""", (review_result,review_note,review_photo_path,issue_id))
             event_id = record_issue_workflow_event(
                 cur, issue_id, user, action, "待复核", "待复核", review_result, review_note, review_photo_path
             )
-            non_oil_review.advance(cur, issue_id, "department", event_id)
+            non_oil_review.advance(cur, issue_id, next_stage, event_id)
+            notify_non_oil_stage(cur, issue_id, event_id, next_stage)
             conn.commit()
             return jsonify(success=True, status="待复核", returned_to_station=False,
-                           message="复核意见已保存，问题已流转至非油事业部终审。")
+                           message="终审意见已保存，已交所属片区退回站点。" if next_stage == 'area_return'
+                           else "复核意见已保存，问题已流转至非油事业部终审。")
 
         cur.execute(
             """
@@ -34234,18 +34269,19 @@ def submit_review(issue_id):
                 issue_id,
             ),
         )
-        record_issue_workflow_event(
+        event_id = record_issue_workflow_event(
             cur,
             issue_id,
             user,
-            "review_submitted",
+            action,
             issue["status"],
             new_status,
             review_result,
             review_note,
             review_photo_path,
         )
-
+        if non_oil_stage and transition['returns_to_station']:
+            notify_non_oil_stage(cur, issue_id, event_id, 'station')
         conn.commit()
         if transition["returns_to_station"]:
             message = "复核已提交，问题已退回站经理重新整改。"

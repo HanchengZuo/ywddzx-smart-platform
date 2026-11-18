@@ -100,6 +100,10 @@ class IssueReviewWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result, "completed")
 
+    def test_preliminary_opinions_never_count_as_final_outcomes_in_reports(self):
+        for result in ('整改通过','整改不通过','通过站级无法整改','驳回站级无法整改'):
+            self.assertEqual(classify_non_oil_rectification(dict(status='待复核',review_result=result)), 'pending_acceptance')
+
 
 class ReviewSubmissionTests(unittest.TestCase):
     def submit(self, result='整改不通过', photo=False, station_result='已整改',
@@ -272,7 +276,7 @@ class UnableClosureDatabaseTests(unittest.TestCase):
             created_at timestamptz DEFAULT CURRENT_TIMESTAMP);
           INSERT INTO inspection_issue_flow_history(issue_id,round_no,action_type,from_status,to_status,result)
             VALUES(42,1,'rectification_submitted','待整改','待复核','站经无法整改');''')
-        for name in ('20261107_001_quality_review_handoff', '20261108_001_non_oil_review'):
+        for name in ('20261107_001_quality_review_handoff', '20261108_001_non_oil_review', '20261118_001_non_oil_return'):
             migration = importlib.import_module(f'migrations.versions.{name}')
             with patch.object(migration.op, 'execute', side_effect=self.cur.execute):
                 migration.upgrade()

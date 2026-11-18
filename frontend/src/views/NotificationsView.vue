@@ -287,7 +287,10 @@ async function read() {
     const data = inbox.data
     items.value = data.items
     total.value = data.total
-    unread.value = data.unread
+    if (unread.value !== data.unread) {
+      unread.value = data.unread
+      window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    }
     enabled.value = data.enabled
     configured.value = data.configured
     publicKey.value = data.public_key

@@ -66,7 +66,7 @@ class BusinessPushTests(unittest.TestCase):
         self.scan();self.assertEqual(len(self.rows('SELECT * FROM web_push_messages')),1)
         detail=self.call('/api/management/notifications').json
         self.assertEqual({entry['key'] for entry in detail['sources']},
-                         {'daily_schedule','appeal_area','appeal_quality','inspection_signature','quality_review_handoff'})
+                         {'daily_schedule','appeal_area','appeal_quality','inspection_signature','quality_review_handoff','non_oil_review'})
         self.assertEqual(detail['records'][0]['inbox_only'],1)
         message=detail['records'][0]['id']
         self.assertEqual(self.call(f'/api/management/notifications/{message}/deliveries').json['items'][0]['status'],'inbox_only')
