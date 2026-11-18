@@ -5,6 +5,10 @@ from psycopg2.extras import RealDictCursor
 from web_push_outbox import enqueue_business
 
 SOURCES = (
+    dict(key='non_oil_review',menu='我的待复核问题 / 我的待整改问题',name='非油问题复核流转',
+         recipient='当前环节有办理权限的所属片区、非油事业部、盛大或本站账号',
+         trigger='站点提交整改、片区复核、终审转交/驳回、现场复核及片区退站',
+         rule='每次流转按事件去重并留痕；阶段或权限变化后不再发送过期待办推送。'),
     dict(key='daily_schedule',menu='巡检排班 / 今日安排',name='今日巡检安排',recipient='被分配的督导组管理人员与督导组组员本人',
          trigger='人员分工确认或站点派工发生变化；未来安排在当日提醒',rule='按账号和当日实际安排合并，相同方案不重复通知。'),
     dict(key='appeal_area',menu='申诉空间',name='待片区处理申诉',recipient='站点所属片区有权初审的片区经理和安全专员',
@@ -124,6 +128,10 @@ def process_signature_changes(connect, recipients, limit=50):
 
 
 def delivery_allowed(cur, message, user_id, recipients):
+    if message['source']=='non_oil_review':
+        import app
+        from non_oil_notifications import delivery_allowed as non_oil_allowed
+        return non_oil_allowed(cur, message, user_id, vars(app))
     if message['source']=='quality_review_handoff':
         cur.execute("""SELECT inspection_table_id FROM issues WHERE id=%s
           AND status='待复核' AND audit_status='approved'
