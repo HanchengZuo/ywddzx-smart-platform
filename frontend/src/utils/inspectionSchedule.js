@@ -47,13 +47,19 @@ export function stationScheduleProgress(row) {
 export const scheduleCellColorOptions = [
   { value: 'green', label: '绿色 · 已检查', color: '#bce6cc' },
   { value: 'red', label: '红色 · 已排班', color: '#f3b9be' },
-  { value: 'yellow', label: '黄色 · 逾期未检查', color: '#f3d78d' },
+  { value: 'yellow', label: '黄色 · 逾期未录问题', color: '#f3d78d' },
+  { value: 'blue', label: '蓝色 · 已录问题待检查人确认', color: '#cfe5fa' },
   { value: 'neutral', label: '浅色 · 待排班', color: '#e8eff5' },
   { value: 'gray', label: '灰色 · 不适用 / 异常免检', color: '#cbd5df' },
 ]
 
+export function scheduleCellAwaitingConfirmation(cell) {
+  return ['assigned', 'unassigned'].includes(cell?.status) && Number(cell.pending_confirmation_count) > 0
+}
+
 export function scheduleCellColor(cell) {
   if (cell.status === 'completed') return 'green'
+  if (scheduleCellAwaitingConfirmation(cell)) return 'blue'
   if (cell.status === 'assigned') return cell.overdue ? 'yellow' : 'red'
   if (cell.status === 'unassigned') return 'neutral'
   return 'gray'
@@ -64,7 +70,7 @@ export function scheduleCellMatches(cell, color = '', person = '') {
   const query = String(person || '').trim().toLocaleLowerCase()
   if (!query) return true
   // Search plan and actual independently; never substitute one for the other.
-  return [...(cell.assignees || []), ...(cell.completed_inspectors || [])].some(
+  return [...(cell.assignees || []), ...(cell.completed_inspectors || []), ...(cell.pending_inspectors || [])].some(
     (p) => [p.display_name, p.username].filter(Boolean).join(' ').toLocaleLowerCase().includes(query),
   )
 }

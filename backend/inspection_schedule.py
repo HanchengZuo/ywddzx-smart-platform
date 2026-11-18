@@ -77,8 +77,10 @@ def column_available(column, station, mode):
 def record_cells(cur, station_ids, table_ids, start, end):
     if not station_ids or not table_ids:
         return {}
+    # An unconfirmed empty form is incomplete, but is not submitted issue evidence.
     cur.execute(f'''WITH matched AS MATERIALIZED (
         SELECT ins.id,ins.station_id,ins.inspection_table_id,ins.inspector_id,ins.inspection_date,
+          EXISTS(SELECT 1 FROM issues recorded WHERE recorded.inspection_id=ins.id) AS has_issues,
           ({completed_record_sql('t.checklist_mode')}) IS TRUE AS completed
         FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
         WHERE ins.station_id=ANY(%s) AND ins.inspection_table_id=ANY(%s)
@@ -91,10 +93,14 @@ def record_cells(cur, station_ids, table_ids, start, end):
       ) SELECT m.station_id,m.inspection_table_id,
         COUNT(DISTINCT m.id) FILTER(WHERE m.completed) AS record_count,
         COUNT(DISTINCT m.id) FILTER(WHERE NOT m.completed) AS unconfirmed_count,
+        COUNT(DISTINCT m.id) FILTER(WHERE NOT m.completed AND m.has_issues) AS pending_confirmation_count,
         (MAX(m.inspection_date) FILTER(WHERE m.completed))::text AS last_inspection_date,
         COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id',u.id,'username',u.username,
           'display_name',COALESCE(NULLIF(TRIM(u.real_name),''),u.username),'role',u.role))
-          FILTER(WHERE m.completed AND u.id IS NOT NULL),'[]') AS inspectors
+          FILTER(WHERE m.completed AND u.id IS NOT NULL),'[]') AS inspectors,
+        COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id',u.id,'username',u.username,
+          'display_name',COALESCE(NULLIF(TRIM(u.real_name),''),u.username),'role',u.role))
+          FILTER(WHERE NOT m.completed AND m.has_issues AND u.id IS NOT NULL),'[]') AS pending_inspectors
       FROM matched m LEFT JOIN participants p ON p.inspection_id=m.id LEFT JOIN users u ON u.id=p.inspector_id
       GROUP BY m.station_id,m.inspection_table_id''', (station_ids, table_ids, start, end))
     return {(row['station_id'], row['inspection_table_id']): dict(row) for row in cur.fetchall()}
@@ -139,6 +145,8 @@ def read_board(cur, chosen, start, end):
                 completed_inspectors=sorted(record.get('inspectors', []), key=lambda user: (user['display_name'], user['id'])),
                 record_count=record.get('record_count', 0), last_inspection_date=record.get('last_inspection_date'),
                 unconfirmed_count=record.get('unconfirmed_count', 0),
+                pending_confirmation_count=record.get('pending_confirmation_count', 0),
+                pending_inspectors=sorted(record.get('pending_inspectors', []), key=lambda user: (user['display_name'], user['id'])),
                 revision=existing.get('revision', 0), updated_by_name=existing.get('updated_by_name', ''),
                 updated_at=existing.get('saved_at', ''),
                 scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None,
@@ -157,7 +165,7 @@ def read_board(cur, chosen, start, end):
     shelf = shelf_items(cur,field_mode(chosen['mode']),start,end,quotas=dispatch_quotas)
     eligible_keys = {(normalized_region(s['region']), str(s['station_name']).strip()) for s in stations}
     excluded = [dict(region=r,station_name=n) for r,n in fixed_roster(chosen['mode']) if (r,n) not in eligible_keys]
-    evidence = dict(rows=[(r['station_id'],r['locked'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
+    evidence = dict(rows=[(r['station_id'],r['locked'],[(k,c['revision'],c['status'],c['pending_confirmation_count']) for k,c in r['cells'].items()]) for r in rows],
                     shelf=[(s['id'],s['revision']) for s in shelf], quotas=dispatch_quotas['revision'], day=today().isoformat())
     token=hashlib.sha256(json.dumps(evidence).encode()).hexdigest()
     return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,

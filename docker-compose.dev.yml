@@ -1,5 +1,10 @@
 services:
   backend:
+    build:
+      args:
+        APT_MIRROR: ${DEV_APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+        APT_SCHEME: https
+        PIP_INDEX_URL: ${DEV_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     environment:
       APP_ENV: development
       APP_SECRET_KEY: ${APP_SECRET_KEY:?Set a private APP_SECRET_KEY in the local .env before enabling LAN access}
@@ -15,11 +20,17 @@ services:
     restart: always
     environment:
       TZ: Asia/Shanghai
+      NPM_CONFIG_REGISTRY: ${DEV_NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_CACHE: /npm-cache
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - ywddzx_npm_cache:/npm-cache
     ports:
       - "${DEV_FRONTEND_BIND_IP:-0.0.0.0}:5173:5173"
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --strictPort"
+    command: sh /app/scripts/dev-entrypoint.sh
     depends_on:
       - backend
+
+volumes:
+  ywddzx_npm_cache:

@@ -296,7 +296,8 @@
               :class="[
                 'matrix-cell',
                 row.cells[column.key].status,
-                { overdue: row.cells[column.key].overdue, 'row-locked': scheduleRowLocked(row) },
+                { overdue: row.cells[column.key].overdue && !scheduleCellAwaitingConfirmation(row.cells[column.key]),
+                  'awaiting-confirmation': scheduleCellAwaitingConfirmation(row.cells[column.key]), 'row-locked': scheduleRowLocked(row) },
                 { 'is-self': !!scheduleSelfRole(row.cells[column.key], board.current_user_id) },
                 { 'filter-match': (cellColor || inspectorKeyword) && scheduleCellMatches(row.cells[column.key], cellColor, inspectorKeyword) },
               ]"
@@ -328,7 +329,7 @@
                   row.cells[column.key].status === 'unavailable' ||
                   (multiSelect && !scheduleCellEditable(row.cells[column.key], canEdit))
                 "
-                :aria-label="`${row.station_name}，${column.label}，${scheduleStatusLabels[row.cells[column.key].status]}${inspectorPreview(row.cells[column.key]) ? '，' + inspectorPreview(row.cells[column.key]) : ''}`"
+                :aria-label="`${row.station_name}，${column.label}，${scheduleCellAwaitingConfirmation(row.cells[column.key]) ? '已录问题待检查人确认' : scheduleStatusLabels[row.cells[column.key].status]}${inspectorPreview(row.cells[column.key]) ? '，' + inspectorPreview(row.cells[column.key]) : ''}`"
                 @click="multiSelect ? selectRow(row) : openCell(row, column)"
               >
                 <span class="mobile-column-label" aria-hidden="true">{{ column.label }}</span>
@@ -358,11 +359,13 @@
                   v-else-if="row.cells[column.key].status === 'exception'"
                   class="exception-reason"
                   >视频异常免检 · {{ row.cells[column.key].video_exception?.reason }}</small
+                ><small v-else-if="scheduleCellAwaitingConfirmation(row.cells[column.key])"
+                  >已录问题 · 待检查人确认</small
                 ><small v-else-if="row.cells[column.key].unconfirmed_count"
-                  >已登记 · 待检查人确认</small
+                  >未录问题 · 空表待确认{{ row.cells[column.key].overdue ? ' · 逾期' : '' }}</small
                 ><small v-else-if="row.cells[column.key].status === 'assigned'"
                   >{{ row.cells[column.key].scheduled_date || '待补计划日期'
-                  }}{{ row.cells[column.key].overdue ? ' · 逾期未检查' : ''
+                  }}{{ row.cells[column.key].overdue ? ' · 逾期未录问题' : ''
                   }}{{ scheduleRowLocked(row) ? ' · 整站已锁定' : canEdit ? ' · 调整' : '' }}</small
                 >
                 <small
@@ -386,7 +389,7 @@
     <footer class="panel-footer">
       <span
         >{{ board?.period.label || '当前周期' }} ·
-        任一适用检查项有记录即整行锁定，黄色表示原计划逾期未完成。<template v-if="mode === 'online'"
+        任一适用检查项有记录即整行锁定，黄色为逾期未录问题，蓝色为已录问题待检查人确认。<template v-if="mode === 'online'"
           >灰色表示整站视频异常免检，不计为已检查。</template
         ></span
       >
@@ -503,7 +506,14 @@
             </p>
             <p v-if="!currentCell.record_count && currentCell.unconfirmed_count && currentCell.status !== 'exception'" class="completion-note">
               已登记 {{ currentCell.unconfirmed_count }} 条视频巡检记录，须在「巡检记录」中确认完成后才计为已检查。
+              {{ currentCell.pending_confirmation_count ? '其中已有问题录入，以蓝色标记待确认。' : '尚未录入问题，未确认的空表不标蓝色。' }}
             </p>
+            <div v-if="scheduleCellAwaitingConfirmation(currentCell) && currentCell.pending_inspectors?.length" class="completion-note">
+              <strong>待确认记录的实际检查人员</strong>
+              <div class="people-tags"><span v-for="person in currentCell.pending_inspectors" :key="person.id">
+                {{ person.display_name }} <small>{{ person.username }}</small>
+              </span></div>
+            </div>
             <div v-if="currentCell.record_count > 0" class="completion-note">
               <strong>本周期已有巡检记录，已锁定</strong>
               <p>
@@ -762,6 +772,7 @@ import {
   shelfHasCapacity,
   scheduleCellColorOptions,
   scheduleCellMatches,
+  scheduleCellAwaitingConfirmation,
 } from '@/utils/inspectionSchedule'
 
 const props = defineProps({ mode: { type: String, required: true }, focusDay: { type: String, default: '' } })
@@ -1990,6 +2001,15 @@ input[type='search'] {
 }
 .schedule-matrix .unassigned {
   background: #f7f9fc;
+}
+.schedule-matrix .matrix-cell.awaiting-confirmation {
+  background: #deedfc;
+  box-shadow: inset 3px 0 #4184c5;
+}
+.schedule-matrix .awaiting-confirmation .cell-button,
+.schedule-matrix .awaiting-confirmation .cell-names,
+.schedule-matrix .awaiting-confirmation .cell-button small {
+  color: #1b5383;
 }
 .completed .mobile-column-label,
 .assigned .mobile-column-label {

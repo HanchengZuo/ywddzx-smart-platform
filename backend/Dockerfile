@@ -3,10 +3,12 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_SCHEME=http
 RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
     && sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && sed -i "s|http://|${APT_SCHEME}://|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update \
+    && apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends \
         postgresql-client \
         fonts-noto-cjk \
         fonts-wqy-zenhei \

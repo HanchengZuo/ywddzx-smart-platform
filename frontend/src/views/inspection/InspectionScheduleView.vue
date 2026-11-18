@@ -23,7 +23,8 @@
             class="legend planned"
           ></span
           >红色为已排班；<span class="legend overdue"></span
-          >黄色为计划日期已过但仍未完成。已有巡检记录的站点锁定排班，视频待确认不计完成。
+          >黄色为计划日期已过且未录问题；<span class="legend awaiting-confirmation"></span
+          >蓝色为已录问题、待检查人确认。未确认空表不标蓝色。已有巡检记录的站点锁定排班，视频确认后才计完成。
         </p>
       </div>
       <p v-if="dispatchNotice" class="dispatch-notice" role="status">{{ dispatchNotice }}</p>
@@ -366,6 +367,9 @@ p {
 }
 .overdue {
   background: #e1b640;
+}
+.awaiting-confirmation {
+  background: #4184c5;
 }
 .schedule-help summary {
   cursor: pointer;

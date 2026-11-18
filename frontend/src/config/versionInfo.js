@@ -14,6 +14,9 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v13.7', date: '2026-11-18', title: '排班待确认蓝色标记',
+    summary: '已录问题但尚未确认的巡检单元格单独标蓝，支持按蓝色筛选。',
+    items: ['黄色仅标记逾期未录问题的计划；蓝色标记有问题待检查人确认，确认完成后转绿色。', '视频完成口径、原排班和整站锁定不变，颜色可与姓名或用户名组合筛选。'] },
   { version: 'v13.6', date: '2026-11-18', title: '非油复核流转与三方证据',
     summary: '盛大意见统一回部门终审，驳回经片区退站；非油视角可查看并导出三方复核记录。',
     items: ['站点问题列表与巡检记录默认不限月份。', '非油复核各环节独立留痕、按权限发送办理通知，通知入口显示未读角标。'] },

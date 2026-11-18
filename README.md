@@ -14,6 +14,10 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v13.7 巡检排班待确认颜色
+
+现场、计量现场、视频排班统一新增蓝色筛选：本周期已录入问题但检查人尚未确认完成的记录以蓝色标记（即使已过计划日期，也优先标蓝）；未录问题且计划日期已过的仍为黄色。未确认空表不标蓝，确认后的空表仍按原规则计完成。绿色、红色及免检/不可安排的优先级、派工、整站锁定和视频确认完成口径不变。颜色可与计划人员、已完成及待确认记录的实际检查人员姓名/用户名组合筛选，保留整站信息。无需数据库迁移或改写历史数据。
+
 ## v13.6 非油复核流转与通知
 
 站点角色的巡检问题列表、巡检记录默认不限月份，保留原有数据范围权限。非油问题的盛大现场复核仅提供意见，所有结果均返回非油事业部终审；部门驳回后进入「片区待退回站点」，片区只能执行退回，不能变更终审结论。片区确认退回后才进入站点待整改，全部环节保留修订令牌与行级锁。
@@ -1277,6 +1281,8 @@ flowchart LR
 第五批提取本地备份列表、storage 打包排除规则、归档暂存发布和旧包清理，保留原文件操作顺序、错误及并发边界。实现与验证已完成，详见 [第五批重构说明](docs/backend-refactor-batch-5.md)。
 
 ### 本地 Docker 开发
+
+本机 `.env` 可加入 `COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml`，之后直接执行 `docker compose up -d --build` 即可同时启动前后端。此设置仅保存在本机，不提交 `.env`；生产 `deploy.sh` 显式选择生产文件，不受它影响。本地开发默认使用清华 HTTPS APT/PyPI 源和 npmmirror npm 源，可分别通过 `DEV_APT_MIRROR`（仅主机名）、`DEV_PIP_INDEX_URL`、`DEV_NPM_REGISTRY` 覆盖。首次构建仍需下载 LibreOffice 和中文字体，后续未改基础镜像和依赖时复用 Docker 层缓存；不要使用 `--no-cache`。前端仅首次或依赖/Node 版本变化时执行 `npm ci`，重启复用依赖卷，下载缓存存于独立 npm 缓存卷，不涉及数据库卷。
 
 首次启动前，在本机不入 Git 的 `.env` 中配置独立的 `APP_SECRET_KEY`（可用 `openssl rand -hex 32` 生成，不复用生产密钥）；已有本地密钥应保持不变，以免旧会话或加密凭据失效。已有数据库继续使用原来的 `DB_PASSWORD`。在原项目根目录启动，不改 Compose 项目名、数据卷或 `storage` 路径，不需要执行 `down -v`。
 

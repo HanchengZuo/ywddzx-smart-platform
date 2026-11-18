@@ -223,6 +223,47 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(self.board(dict(mode='online', year=2026, month=10))['summary']['completed'], 1)
         self.assertEqual(self.board(dict(mode='online', year=2026, month=11))['summary']['completed'], 1)
 
+    def test_pending_confirmation_separates_empty_records_from_submitted_issues(self):
+        query=dict(mode='online',year=2026,month=10)
+        self.cur.execute("""INSERT INTO inspection_schedule_cells
+          (mode,year,period_number,station_id,column_key,inspector_ids,revision,scheduled_date)
+          VALUES('online',2026,10,1,'safety','[2]',1,'2026-10-16')""")
+        self.admin.commit()
+        def cell(): return self.board(query)['rows'][0]['cells']['safety']
+        before=cell()
+        self.assertEqual((before['status'],before['overdue'],before['pending_confirmation_count']),('assigned',True,0))
+        rid=self.record(table=7,completion='待检查人确认')
+        empty=cell()
+        self.assertEqual((empty['record_count'],empty['unconfirmed_count'],empty['pending_confirmation_count']),(0,1,0))
+        self.cur.execute("INSERT INTO issues(inspection_id,inspector_id,audit_status) VALUES(%s,2,'pending'),(%s,3,'approved')",(rid,rid))
+        self.admin.commit()
+        pending=cell()
+        self.assertEqual((pending['status'],pending['record_count'],pending['pending_confirmation_count']),('assigned',0,1))
+        self.assertEqual({p['username'] for p in pending['pending_inspectors']},{'staff','lead'})
+        self.assertTrue(pending['row_locked'])
+        self.assertNotEqual(before['pending_confirmation_count'],pending['pending_confirmation_count'])
+        self.record(table=7,day='2026-11-01',completion='待检查人确认')
+        self.assertEqual(cell()['unconfirmed_count'],1,'other months must not leak into the selected period')
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='已确认完成' WHERE id=%s",(rid,))
+        self.admin.commit()
+        self.assertEqual((cell()['status'],cell()['pending_confirmation_count']),('completed',0))
+        self.cur.execute("UPDATE inspections SET inspector_completion_status='待检查人确认' WHERE id=%s",(rid,))
+        self.cur.execute('DELETE FROM issues WHERE inspection_id=%s',(rid,))
+        self.admin.commit()
+        self.assertEqual((cell()['status'],cell()['pending_confirmation_count'],cell()['overdue']),('assigned',0,True))
+
+    def test_offline_records_still_complete_immediately_and_unplanned_video_can_await_confirmation(self):
+        rid=self.record(completion='待检查人确认')
+        self.cur.execute('INSERT INTO issues(inspection_id,inspector_id) VALUES(%s,3)',(rid,))
+        self.admin.commit()
+        field=self.board()['rows'][0]['cells']['odor']
+        self.assertEqual((field['status'],field['pending_confirmation_count']),('completed',0))
+        rid=self.record(table=7,completion='待检查人确认')
+        self.cur.execute('INSERT INTO issues(inspection_id,inspector_id) VALUES(%s,3)',(rid,))
+        self.admin.commit()
+        video=self.board(dict(mode='online',year=2026,month=10))['rows'][0]['cells']['safety']
+        self.assertEqual((video['status'],video['pending_confirmation_count'],video['row_locked']),('unassigned',1,True))
+
     def test_video_enrollment_is_authoritative_and_sizhuan_follows_sanxin_without_number_gaps(self):
         query=dict(mode='online',year=2026,month=10)
         self.cur.execute('''INSERT INTO stations(id,region,station_name,include_online_plan) VALUES

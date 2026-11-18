@@ -108,6 +108,11 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.assertEqual(self.plan().status_code, 200)
         table=next(c['table_id'] for c in self.annual()['columns'] if c['key']=='metering_video')
         rid=self.record(table=table,completion='待检查人确认')
+        def cell(): return self.annual()['rows'][0]['cells']['metering_video']
+        self.assertEqual(cell()['pending_confirmation_count'],0)
+        self.cur.execute('INSERT INTO issues(inspection_id,inspector_id) VALUES(%s,2)',(rid,))
+        self.admin.commit()
+        self.assertEqual(cell()['pending_confirmation_count'],1)
         def progress():
             data=self.client.get('/api/inspection-schedule/metering-plan?year=2026&month=10').json
             row=next(r for r in data['regions'] if r['region']=='松金')
@@ -116,6 +121,7 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.cur.execute("UPDATE inspections SET inspector_completion_status='已确认完成' WHERE id=%s",(rid,))
         self.admin.commit()
         self.assertEqual(progress(),(1,1,0))
+        self.assertEqual((cell()['status'],cell()['pending_confirmation_count']),('completed',0))
 
     def test_quarter_only_links_monthly_quota_members_not_every_station(self):
         self.assertEqual(self.save(station_id=1).status_code,200)

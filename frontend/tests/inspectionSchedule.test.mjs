@@ -11,6 +11,7 @@ import {
   scheduleRowLocked,
   scheduleCellMatches,
   scheduleCellColor,
+  scheduleCellAwaitingConfirmation,
 } from '../src/utils/inspectionSchedule.js'
 
 const people = [1, 2, 3].map((id) => ({ id, display_name: '人员' + id }))
@@ -32,6 +33,26 @@ const rows = [
     cells: { a: { status: 'unassigned' }, b: { status: 'unavailable' } },
   },
 ]
+
+test('blue waiting confirmation takes priority over overdue yellow without crediting completion', () => {
+  const cell={status:'assigned',overdue:true,unconfirmed_count:1,pending_confirmation_count:1,row_locked:true,
+    assignees:[{display_name:'计划人',username:'planned'}],pending_inspectors:[{display_name:'实际录入人',username:'actual'}]}
+  assert.equal(scheduleCellColor(cell),'blue')
+  assert.equal(scheduleCellColor({...cell,overdue:false}),'blue')
+  assert.equal(scheduleCellColor({...cell,status:'unassigned',assignees:[]}),'blue')
+  assert.equal(scheduleCellColor({...cell,pending_confirmation_count:0}),'yellow')
+  assert.equal(scheduleCellColor({...cell,pending_confirmation_count:undefined}),'yellow')
+  assert.equal(scheduleCellColor({...cell,status:'completed'}),'green')
+  assert.equal(scheduleCellColor({...cell,status:'exception'}),'gray')
+  assert.equal(scheduleCellColor({...cell,status:'unavailable'}),'gray')
+  assert.equal(scheduleCellAwaitingConfirmation(undefined),false)
+  const row={station_name:'甲站',region:'松金',cells:{safety:cell}}
+  assert.deepEqual(filterScheduleRows([row],'','','','blue','ACTUAL'),[row])
+  assert.deepEqual(filterScheduleRows([row],'','','','yellow','actual'),[])
+  assert.equal(scheduleCounts([row]).completed,0)
+  assert.equal(scheduleCounts([row]).assigned,1)
+  assert.equal(scheduleCellEditable(cell,true),false)
+})
 
 test('color filters use actual cell fill, distinguish overdue plans, and intersect people in the same cell', () => {
   const cells = [
